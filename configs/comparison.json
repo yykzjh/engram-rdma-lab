@@ -1,578 +1,194 @@
 [
   {
-    "name": "stratified-t1-baseline-graph",
-    "variant": "baseline",
+    "name": "compare-read-c0-stratified-t1",
+    "variant": "read",
     "tokens": 1,
+    "c2c": 0,
     "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 1,
-    "rd_atomic": 8
+    "distribution": "stratified"
   },
   {
-    "name": "stratified-t1-hybrid16-graph",
-    "variant": "hybrid16",
+    "name": "compare-read-c1-stratified-t1",
+    "variant": "read",
     "tokens": 1,
+    "c2c": 1,
     "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 1,
-    "rd_atomic": 8
+    "distribution": "stratified"
   },
   {
-    "name": "stratified-t1-write-graph",
+    "name": "compare-write-c0-stratified-t1",
     "variant": "write",
     "tokens": 1,
+    "c2c": 0,
     "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 1,
-    "rd_atomic": 8
+    "distribution": "stratified"
   },
   {
-    "name": "stratified-t1-hybrid16-api",
-    "variant": "hybrid16",
-    "tokens": 1,
-    "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 0,
-    "rd_atomic": 8
-  },
-  {
-    "name": "stratified-t8-baseline-graph",
-    "variant": "baseline",
-    "tokens": 8,
-    "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 1,
-    "rd_atomic": 16
-  },
-  {
-    "name": "stratified-t8-hybrid16-graph",
-    "variant": "hybrid16",
-    "tokens": 8,
-    "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 1,
-    "rd_atomic": 16
-  },
-  {
-    "name": "stratified-t8-write-graph",
-    "variant": "write",
-    "tokens": 8,
-    "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 1,
-    "rd_atomic": 16
-  },
-  {
-    "name": "stratified-t8-hybrid16-api",
-    "variant": "hybrid16",
-    "tokens": 8,
-    "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 0,
-    "rd_atomic": 16
-  },
-  {
-    "name": "stratified-t64-baseline-graph",
-    "variant": "baseline",
-    "tokens": 64,
-    "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 1,
-    "rd_atomic": 16
-  },
-  {
-    "name": "stratified-t64-hybrid16-graph",
-    "variant": "hybrid16",
-    "tokens": 64,
-    "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 1,
-    "rd_atomic": 16
-  },
-  {
-    "name": "stratified-t64-write-graph",
-    "variant": "write",
-    "tokens": 64,
-    "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 1,
-    "rd_atomic": 16
-  },
-  {
-    "name": "stratified-t64-hybrid16-api",
-    "variant": "hybrid16",
-    "tokens": 64,
-    "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 0,
-    "rd_atomic": 16
-  },
-  {
-    "name": "stratified-t512-baseline-graph",
-    "variant": "baseline",
-    "tokens": 512,
-    "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 1,
-    "rd_atomic": 16
-  },
-  {
-    "name": "stratified-t512-hybrid16-graph",
-    "variant": "hybrid16",
-    "tokens": 512,
-    "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 1,
-    "rd_atomic": 16
-  },
-  {
-    "name": "stratified-t512-write-graph",
-    "variant": "write",
-    "tokens": 512,
-    "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 1,
-    "rd_atomic": 16
-  },
-  {
-    "name": "stratified-t512-hybrid16-api",
-    "variant": "hybrid16",
-    "tokens": 512,
-    "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 0,
-    "rd_atomic": 16
-  },
-  {
-    "name": "stratified-t4096-baseline-graph",
-    "variant": "baseline",
-    "tokens": 4096,
-    "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 1,
-    "rd_atomic": 16
-  },
-  {
-    "name": "stratified-t4096-hybrid16-graph",
-    "variant": "hybrid16",
-    "tokens": 4096,
-    "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 1,
-    "rd_atomic": 16
-  },
-  {
-    "name": "stratified-t4096-write-graph",
-    "variant": "write",
-    "tokens": 4096,
-    "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 1,
-    "rd_atomic": 16
-  },
-  {
-    "name": "stratified-t4096-hybrid16-api",
-    "variant": "hybrid16",
-    "tokens": 4096,
-    "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 0,
-    "rd_atomic": 16
-  },
-  {
-    "name": "stratified-t32768-baseline-graph",
-    "variant": "baseline",
-    "tokens": 32768,
-    "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 1,
-    "rd_atomic": 16
-  },
-  {
-    "name": "stratified-t32768-hybrid16-graph",
-    "variant": "hybrid16",
-    "tokens": 32768,
-    "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 1,
-    "rd_atomic": 16
-  },
-  {
-    "name": "stratified-t32768-write-graph",
-    "variant": "write",
-    "tokens": 32768,
-    "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 1,
-    "rd_atomic": 16
-  },
-  {
-    "name": "stratified-t32768-hybrid16-api",
-    "variant": "hybrid16",
-    "tokens": 32768,
-    "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 0,
-    "rd_atomic": 16
-  },
-  {
-    "name": "stratified-t131072-baseline-graph",
-    "variant": "baseline",
-    "tokens": 131072,
-    "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 1,
-    "rd_atomic": 8
-  },
-  {
-    "name": "stratified-t131072-hybrid16-graph",
-    "variant": "hybrid16",
-    "tokens": 131072,
-    "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 1,
-    "rd_atomic": 8
-  },
-  {
-    "name": "stratified-t131072-write-graph",
-    "variant": "write",
-    "tokens": 131072,
-    "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 1,
-    "rd_atomic": 8
-  },
-  {
-    "name": "stratified-t131072-hybrid16-api",
-    "variant": "hybrid16",
-    "tokens": 131072,
-    "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 0,
-    "rd_atomic": 8
-  },
-  {
-    "name": "stratified-t262144-baseline-graph",
-    "variant": "baseline",
-    "tokens": 262144,
-    "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 1,
-    "rd_atomic": 8
-  },
-  {
-    "name": "stratified-t262144-hybrid16-graph",
-    "variant": "hybrid16",
-    "tokens": 262144,
-    "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 1,
-    "rd_atomic": 8
-  },
-  {
-    "name": "stratified-t262144-write-graph",
-    "variant": "write",
-    "tokens": 262144,
-    "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 1,
-    "rd_atomic": 8
-  },
-  {
-    "name": "stratified-t262144-hybrid16-api",
-    "variant": "hybrid16",
-    "tokens": 262144,
-    "rounds": 20,
-    "distribution": "stratified",
-    "cuda_graph": 0,
-    "rd_atomic": 8
-  },
-  {
-    "name": "uniform-t1-baseline-graph",
-    "variant": "baseline",
-    "tokens": 1,
-    "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 1,
-    "rd_atomic": 8
-  },
-  {
-    "name": "uniform-t1-hybrid16-graph",
-    "variant": "hybrid16",
-    "tokens": 1,
-    "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 1,
-    "rd_atomic": 8
-  },
-  {
-    "name": "uniform-t1-write-graph",
+    "name": "compare-write-c1-stratified-t1",
     "variant": "write",
     "tokens": 1,
+    "c2c": 1,
     "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 1,
-    "rd_atomic": 8
+    "distribution": "stratified"
   },
   {
-    "name": "uniform-t1-hybrid16-api",
-    "variant": "hybrid16",
+    "name": "compare-read-c0-stratified-t4096",
+    "variant": "read",
+    "tokens": 4096,
+    "c2c": 0,
+    "rounds": 20,
+    "distribution": "stratified"
+  },
+  {
+    "name": "compare-read-c1-stratified-t4096",
+    "variant": "read",
+    "tokens": 4096,
+    "c2c": 1,
+    "rounds": 20,
+    "distribution": "stratified"
+  },
+  {
+    "name": "compare-write-c0-stratified-t4096",
+    "variant": "write",
+    "tokens": 4096,
+    "c2c": 0,
+    "rounds": 20,
+    "distribution": "stratified"
+  },
+  {
+    "name": "compare-write-c1-stratified-t4096",
+    "variant": "write",
+    "tokens": 4096,
+    "c2c": 1,
+    "rounds": 20,
+    "distribution": "stratified"
+  },
+  {
+    "name": "compare-read-c0-stratified-t131072",
+    "variant": "read",
+    "tokens": 131072,
+    "c2c": 0,
+    "rounds": 20,
+    "distribution": "stratified"
+  },
+  {
+    "name": "compare-read-c1-stratified-t131072",
+    "variant": "read",
+    "tokens": 131072,
+    "c2c": 1,
+    "rounds": 20,
+    "distribution": "stratified"
+  },
+  {
+    "name": "compare-write-c0-stratified-t131072",
+    "variant": "write",
+    "tokens": 131072,
+    "c2c": 0,
+    "rounds": 20,
+    "distribution": "stratified"
+  },
+  {
+    "name": "compare-write-c1-stratified-t131072",
+    "variant": "write",
+    "tokens": 131072,
+    "c2c": 1,
+    "rounds": 20,
+    "distribution": "stratified"
+  },
+  {
+    "name": "compare-read-c0-uniform-t1",
+    "variant": "read",
     "tokens": 1,
+    "c2c": 0,
     "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 0,
-    "rd_atomic": 8
+    "distribution": "uniform"
   },
   {
-    "name": "uniform-t8-baseline-graph",
-    "variant": "baseline",
-    "tokens": 8,
+    "name": "compare-read-c1-uniform-t1",
+    "variant": "read",
+    "tokens": 1,
+    "c2c": 1,
     "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 1,
-    "rd_atomic": 16
+    "distribution": "uniform"
   },
   {
-    "name": "uniform-t8-hybrid16-graph",
-    "variant": "hybrid16",
-    "tokens": 8,
-    "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 1,
-    "rd_atomic": 16
-  },
-  {
-    "name": "uniform-t8-write-graph",
+    "name": "compare-write-c0-uniform-t1",
     "variant": "write",
-    "tokens": 8,
+    "tokens": 1,
+    "c2c": 0,
     "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 1,
-    "rd_atomic": 16
+    "distribution": "uniform"
   },
   {
-    "name": "uniform-t8-hybrid16-api",
-    "variant": "hybrid16",
-    "tokens": 8,
-    "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 0,
-    "rd_atomic": 16
-  },
-  {
-    "name": "uniform-t64-baseline-graph",
-    "variant": "baseline",
-    "tokens": 64,
-    "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 1,
-    "rd_atomic": 16
-  },
-  {
-    "name": "uniform-t64-hybrid16-graph",
-    "variant": "hybrid16",
-    "tokens": 64,
-    "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 1,
-    "rd_atomic": 16
-  },
-  {
-    "name": "uniform-t64-write-graph",
+    "name": "compare-write-c1-uniform-t1",
     "variant": "write",
-    "tokens": 64,
+    "tokens": 1,
+    "c2c": 1,
     "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 1,
-    "rd_atomic": 16
+    "distribution": "uniform"
   },
   {
-    "name": "uniform-t64-hybrid16-api",
-    "variant": "hybrid16",
-    "tokens": 64,
-    "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 0,
-    "rd_atomic": 16
-  },
-  {
-    "name": "uniform-t512-baseline-graph",
-    "variant": "baseline",
-    "tokens": 512,
-    "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 1,
-    "rd_atomic": 16
-  },
-  {
-    "name": "uniform-t512-hybrid16-graph",
-    "variant": "hybrid16",
-    "tokens": 512,
-    "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 1,
-    "rd_atomic": 16
-  },
-  {
-    "name": "uniform-t512-write-graph",
-    "variant": "write",
-    "tokens": 512,
-    "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 1,
-    "rd_atomic": 16
-  },
-  {
-    "name": "uniform-t512-hybrid16-api",
-    "variant": "hybrid16",
-    "tokens": 512,
-    "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 0,
-    "rd_atomic": 16
-  },
-  {
-    "name": "uniform-t4096-baseline-graph",
-    "variant": "baseline",
+    "name": "compare-read-c0-uniform-t4096",
+    "variant": "read",
     "tokens": 4096,
+    "c2c": 0,
     "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 1,
-    "rd_atomic": 16
+    "distribution": "uniform"
   },
   {
-    "name": "uniform-t4096-hybrid16-graph",
-    "variant": "hybrid16",
+    "name": "compare-read-c1-uniform-t4096",
+    "variant": "read",
     "tokens": 4096,
+    "c2c": 1,
     "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 1,
-    "rd_atomic": 16
+    "distribution": "uniform"
   },
   {
-    "name": "uniform-t4096-write-graph",
+    "name": "compare-write-c0-uniform-t4096",
     "variant": "write",
     "tokens": 4096,
+    "c2c": 0,
     "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 1,
-    "rd_atomic": 16
+    "distribution": "uniform"
   },
   {
-    "name": "uniform-t4096-hybrid16-api",
-    "variant": "hybrid16",
+    "name": "compare-write-c1-uniform-t4096",
+    "variant": "write",
     "tokens": 4096,
+    "c2c": 1,
     "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 0,
-    "rd_atomic": 16
+    "distribution": "uniform"
   },
   {
-    "name": "uniform-t32768-baseline-graph",
-    "variant": "baseline",
-    "tokens": 32768,
-    "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 1,
-    "rd_atomic": 16
-  },
-  {
-    "name": "uniform-t32768-hybrid16-graph",
-    "variant": "hybrid16",
-    "tokens": 32768,
-    "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 1,
-    "rd_atomic": 16
-  },
-  {
-    "name": "uniform-t32768-write-graph",
-    "variant": "write",
-    "tokens": 32768,
-    "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 1,
-    "rd_atomic": 16
-  },
-  {
-    "name": "uniform-t32768-hybrid16-api",
-    "variant": "hybrid16",
-    "tokens": 32768,
-    "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 0,
-    "rd_atomic": 16
-  },
-  {
-    "name": "uniform-t131072-baseline-graph",
-    "variant": "baseline",
+    "name": "compare-read-c0-uniform-t131072",
+    "variant": "read",
     "tokens": 131072,
+    "c2c": 0,
     "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 1,
-    "rd_atomic": 8
+    "distribution": "uniform"
   },
   {
-    "name": "uniform-t131072-hybrid16-graph",
-    "variant": "hybrid16",
+    "name": "compare-read-c1-uniform-t131072",
+    "variant": "read",
     "tokens": 131072,
+    "c2c": 1,
     "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 1,
-    "rd_atomic": 8
+    "distribution": "uniform"
   },
   {
-    "name": "uniform-t131072-write-graph",
+    "name": "compare-write-c0-uniform-t131072",
     "variant": "write",
     "tokens": 131072,
+    "c2c": 0,
     "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 1,
-    "rd_atomic": 8
+    "distribution": "uniform"
   },
   {
-    "name": "uniform-t131072-hybrid16-api",
-    "variant": "hybrid16",
-    "tokens": 131072,
-    "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 0,
-    "rd_atomic": 8
-  },
-  {
-    "name": "uniform-t262144-baseline-graph",
-    "variant": "baseline",
-    "tokens": 262144,
-    "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 1,
-    "rd_atomic": 8
-  },
-  {
-    "name": "uniform-t262144-hybrid16-graph",
-    "variant": "hybrid16",
-    "tokens": 262144,
-    "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 1,
-    "rd_atomic": 8
-  },
-  {
-    "name": "uniform-t262144-write-graph",
+    "name": "compare-write-c1-uniform-t131072",
     "variant": "write",
-    "tokens": 262144,
+    "tokens": 131072,
+    "c2c": 1,
     "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 1,
-    "rd_atomic": 8
-  },
-  {
-    "name": "uniform-t262144-hybrid16-api",
-    "variant": "hybrid16",
-    "tokens": 262144,
-    "rounds": 20,
-    "distribution": "uniform",
-    "cuda_graph": 0,
-    "rd_atomic": 8
+    "distribution": "uniform"
   }
 ]

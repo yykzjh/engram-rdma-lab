@@ -9,6 +9,12 @@
   },
   "baseline_kernel_sha256": "442539a3fa43221164358bc6beb8f26e86619b6d224b928de13a226f195f08ae",
   "note": "User learning comments retained. Baseline Engram kernel includes the tested CUSTOM_STRIDE representative-rank correction; no G override. Original experiment sources migrated, with loopback defaults for portability.",
-  "scope": "DeepEP Engram and required common/JIT dependencies; SGE WRITE; original UMR/READ/WRITE experiment sources",
-  "excluded": "Unrelated upstream EP/PP/Bucket implementations"
+  "scope": "Only DeepEP Engram READ and SGE WRITE, each with opt-in intra-node C2C; required shared dependencies and validation harnesses",
+  "excluded": "Unrelated upstream EP/PP/Bucket implementations",
+  "current_c2c_environment": {
+    "READ": "ENGRAM_READ_C2C",
+    "WRITE": "ENGRAM_WRITE_C2C",
+    "default": 0
+  },
+  "historical_experiments_source_commit": "91a6eba964c7d9a1fe3a688723d910b8fc8aac96"
 }

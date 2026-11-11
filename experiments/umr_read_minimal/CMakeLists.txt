@@ -1,7 +1,0 @@
-cmake_minimum_required(VERSION 3.18)
-project(umr_read_minimal LANGUAGES CXX)
-find_package(CUDAToolkit REQUIRED)
-add_executable(umr_read_minimal benchmark.cpp)
-target_compile_features(umr_read_minimal PRIVATE cxx_std_17)
-target_compile_options(umr_read_minimal PRIVATE -O3 -Wall -Wextra)
-target_link_libraries(umr_read_minimal PRIVATE ibverbs mlx5 CUDA::cuda_driver)

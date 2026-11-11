@@ -50,22 +50,6 @@ static std::vector<uint32_t> generate_indices(const Options& o, int round = 0) {
     }
     return result;
 }
-static std::vector<uint32_t> load_indices(const Options& o) {
-    if (o.indices_dir.empty()) return generate_indices(o);
-    std::string path = o.indices_dir + "/indices-r" + std::to_string(o.rank) + "-t" +
-        std::to_string(o.groups) + "-" + o.distribution + ".bin";
-    std::ifstream input(path, std::ios::binary);
-    if (input) {
-        std::vector<uint32_t> result(frame_bytes(o) / ROW);
-        input.read(reinterpret_cast<char*>(result.data()), result.size() * sizeof(uint32_t));
-        check(size_t(input.gcount()) == result.size() * sizeof(uint32_t), "input indices file size");
-        return result;
-    }
-    auto result = generate_indices(o);
-    std::ofstream output(path, std::ios::binary);
-    output.write(reinterpret_cast<const char*>(result.data()), result.size() * sizeof(uint32_t));
-    check(output.good(), "write indices file"); return result;
-}
 static void expected_rows(Plan& p, const Options& o, const uint32_t* input) {
     size_t i = 0; uint32_t base = 0;
     for (int e : o.entries) {

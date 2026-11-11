@@ -56,15 +56,15 @@ static void serve_gpu(Channel&c,Inbox&inbox,int requester,std::atomic<bool>&stop
     while(!stop.load()){
         unsigned spins=0;while(__atomic_load_n(slot,__ATOMIC_ACQUIRE)<epoch){if(stop.load())return;if(++spins==1024){if(o.owner_poll_us)usleep(o.owner_poll_us);spins=0;}}
         uint64_t meta=__atomic_load_n(slot+1,__ATOMIC_ACQUIRE);uint32_t nr=uint32_t(meta),base=uint32_t(meta>>32);
-        check(uint64_t(base)+nr<=frame_bytes(o)/ROW,"request bounds");unsigned ng=(nr+o.merge_rows-1)/o.merge_rows;Response response{};response.groups=ng;response.fetch_id=epoch;
+        check(uint64_t(base)+nr<=frame_bytes(o)/ROW,"request bounds");unsigned ng=(nr+o.merge_rows-1)/o.merge_rows;
         size_t offset=0;int pending=0,windows=0;
-        for(unsigned at=0;at<ng;at+=o.pool){auto start=Clock::now();unsigned n=std::min(unsigned(o.pool),ng-at),batch_rows=0;
+        for(unsigned at=0;at<ng;at+=o.pool){unsigned n=std::min(unsigned(o.pool),ng-at),batch_rows=0;
             for(unsigned i=0;i<n;++i){unsigned row=(at+i)*o.merge_rows,count=std::min(unsigned(o.merge_rows),nr-row);groups[i]={count,base+row};batch_rows+=count;}
             for(unsigned i=0;i<batch_rows;++i){uint32_t row=rows[offset+i];check(row<unsigned(o.table_rows),"source row");sges[i].addr=reinterpret_cast<uintptr_t>(r.cpu)+size_t(row)*ROW;}
-            response.stats.layout_us+=us(start);auto data_start=Clock::now();pending+=post_write(c,groups.data(),n,sges,response.stats);response.stats.data_us+=us(data_start);offset+=batch_rows;
-            if(++windows==o.owner_windows||at+n==ng){auto t=Clock::now();r.poll(pending);double wait=us(t);response.stats.cq_wait_us+=wait;response.stats.data_us+=wait;pending=windows=0;}
+            pending+=post_write(c,groups.data(),n,sges);offset+=batch_rows;
+            if(++windows==o.owner_windows||at+n==ng){r.poll(pending);pending=windows=0;}
         }
-        publish_gpu_done(c,epoch,std::max(1U,std::min(unsigned(o.qps),ng)));c.sock.send(response);++epoch;
+        publish_gpu_done(c,epoch,std::max(1U,std::min(unsigned(o.qps),ng)));++epoch;
     }
 }
 struct GpuRouter {
@@ -124,35 +124,34 @@ struct GpuRouter {
     }
 };
 #include "gpu_graph.hpp"
+#include "async_validation.hpp"
 static void run_rank(Options o){
     pin_core(o,0,false);Gpu gpu;gpu.init(o);Inbox inbox(o);Plan plan(o);Workers workers(o);
+    std::printf("{\"kind\":\"metadata\",\"rank\":%d,\"c2c\":%s,\"gpu_allocation_bytes\":%zu,\"staging_bytes\":%zu,\"owner_threads\":%d}\n",o.rank,o.hybrid_local?"true":"false",gpu.allocation_bytes,gpu.bytes,o.hybrid_local?4:8);
     Inbox table(o,size_t(o.table_rows)*ROW);
     for(int row=0;row<o.table_rows;++row)for(unsigned w=0;w<ROW/8;++w)
         reinterpret_cast<uint64_t*>(table.ptr)[size_t(row)*ROW/8+w]=pattern(o.rank*o.table_rows+row,w);
     std::atomic<bool>stop{false};std::vector<std::thread>owners;
     try{
-        for(int peer=0;peer<8;++peer)if(peer/4!=o.rank/4)owners.emplace_back([&,peer]{
+        for(int peer=0;peer<8;++peer)if(!o.hybrid_local||peer/4!=o.rank/4)owners.emplace_back([&,peer]{
             try{Options owner=o;owner.owner=true;pin_core(owner,peer,true);Channel c;c.init(owner,peer,reinterpret_cast<void*>(table.ptr),nullptr);serve_gpu(c,inbox,peer,stop);}
             catch(const std::exception&e){std::fprintf(stderr,"owner error: %s\n",e.what());std::abort();}
         });
         std::vector<std::unique_ptr<Channel>>channels(8);
-        workers.run([&](int peer){if(peer/4==o.rank/4)return;cuda_check(cuCtxSetCurrent(gpu.ctx),"channel context");channels[peer]=std::make_unique<Channel>();channels[peer]->init(o,peer,nullptr,&gpu);});
+        workers.run([&](int peer){if(o.hybrid_local&&peer/4==o.rank/4)return;cuda_check(cuCtxSetCurrent(gpu.ctx),"channel context");channels[peer]=std::make_unique<Channel>();channels[peer]->init(o,peer,nullptr,&gpu);});
         GpuRouter router(o,inbox);InboxAliases table_aliases(o,table);CUdeviceptr pointers=0;
         cuda_check(cuMemAlloc(&pointers,sizeof(table_aliases.pointers)),"CPU table pointers");cuda_check(cuMemcpyHtoD(pointers,table_aliases.pointers,sizeof(table_aliases.pointers)),"publish CPU table pointers");
         CUipcMemHandle handle{};cuda_check(cuIpcGetMemHandle(&handle,gpu.sf_shard),"export scales");std::array<CUipcMemHandle,8>handles;
         MPI_Allgather(&handle,sizeof(handle),MPI_BYTE,handles.data(),sizeof(handle),MPI_BYTE,MPI_COMM_WORLD);
         for(int i=0;i<4;++i){if(i==o.rank%4)gpu.sf_peers[i]=gpu.sf_shard;else cuda_check(cuIpcOpenMemHandle(&gpu.sf_peers[i],handles[o.rank/4*4+i],CU_IPC_MEM_LAZY_ENABLE_PEER_ACCESS),"import scales");}
-        auto graph=std::make_unique<GpuFetchGraph>(gpu,router,inbox,o,nullptr,nullptr,pointers);
-        for(int round=-o.warmups;round<o.rounds;++round){
+        auto graph=std::make_unique<GpuFetchGraph>(gpu,router,inbox,o,pointers);
+        if(o.async_check)validate_async_forward(gpu,router,*graph,o);
+        else for(int round=-o.warmups;round<o.rounds;++round){
             uint64_t epoch=round+o.warmups+1;auto raw=generate_indices(o,epoch);expected_rows(plan,o,raw.data());
             cuda_check(cuMemcpyHtoD(gpu.input,raw.data(),raw.size()*4),"upstream indices");gpu.clear_for_validation();MPI_Barrier(MPI_COMM_WORLD);
             auto start=Clock::now();graph->run();double elapsed=us(start)/1000;
-            std::array<Response,8>responses{};
-            for(int peer=0;peer<8;++peer)if(channels[peer]){channels[peer]->sock.recv(responses[peer]);check(responses[peer].fetch_id==epoch&&!responses[peer].status,"telemetry epoch");}
             cuda_check(cuMemcpyDtoH(gpu.host_input,gpu.input,raw.size()*4),"validation indices");gpu.validate(plan);gpu.validate_scales(o);
-            std::printf("{\"kind\":\"sample\",\"mode\":\"write_sge\",\"rank\":%d,\"round\":%d,\"warmup\":%s,\"tokens\":%d,\"bytes\":%llu,\"e2e_ms\":%.6f,\"gbps\":%.6f,\"data_ok\":true,\"scale_ok\":true,\"input_epoch\":%llu,\"peers\":[",o.rank,round,round<0?"true":"false",o.groups,(unsigned long long)frame_bytes(o),elapsed,frame_bytes(o)/elapsed/1e6,(unsigned long long)epoch);
-            for(int peer=0;peer<8;++peer){auto&s=responses[peer].stats;std::printf("%s{\"owner\":%d,\"layout_ms\":%.6f,\"data_ms\":%.6f,\"verbs_post_ms\":%.6f,\"cq_wait_ms\":%.6f}",peer?",":"",peer,s.layout_us/1000,s.data_us/1000,s.verbs_post_us/1000,s.cq_wait_us/1000);}
-            std::printf("]}\n");
+            std::printf("{\"kind\":\"sample\",\"mode\":\"write_sge\",\"rank\":%d,\"round\":%d,\"warmup\":%s,\"tokens\":%d,\"bytes\":%llu,\"e2e_ms\":%.6f,\"gbps\":%.6f,\"data_ok\":true,\"scale_ok\":true,\"input_epoch\":%llu,\"c2c\":%s}\n",o.rank,round,round<0?"true":"false",o.groups,(unsigned long long)frame_bytes(o),elapsed,frame_bytes(o)/elapsed/1e6,(unsigned long long)epoch,o.hybrid_local?"true":"false");
         }
         MPI_Barrier(MPI_COMM_WORLD);graph.reset();cuMemFree(pointers);stop.store(true);
         for(auto&t:owners)t.join();MPI_Barrier(MPI_COMM_WORLD);gpu.close_scale_peers(o);MPI_Barrier(MPI_COMM_WORLD);

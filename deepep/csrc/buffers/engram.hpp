@@ -27,6 +27,7 @@ class EngramBuffer: public BufferBase {
     static constexpr int kFlushDepthReserve = 256;
 
     bool allow_hybrid_mode;
+    bool use_c2c;
     int qp_depth;
 
     std::vector<int> num_entries_per_layer;
@@ -50,6 +51,9 @@ public:
         BufferBase(explicitly_destroy),
         allow_hybrid_mode(allow_hybrid_mode),
         qp_depth(qp_depth) {
+        const int c2c = get_env<int>("ENGRAM_READ_C2C", 0);
+        EP_HOST_ASSERT(c2c == 0 or c2c == 1);
+        use_c2c = c2c and use_cpu_rdma_storage;
         const auto num_workspace_bytes = math::align<int64_t>(
             sizeof(layout::EngramWorkspace),
             kNumAllocationAlignmentBytes);
@@ -227,7 +231,7 @@ public:
             num_rdma_peers,
             context->gin_min_stride,
             num_qps, qp_depth - kFlushDepthReserve,
-            context->num_gpu_timeout_cycles,
+            context->num_gpu_timeout_cycles, use_c2c,
             at::cuda::getCurrentCUDAStream()
         );
 
@@ -239,7 +243,7 @@ public:
                     context->dev_comm,
                     context->window,
                     num_rdma_peers,
-                    num_active_gin_contexts,
+                    num_active_gin_contexts, use_c2c,
                     at::cuda::getCurrentCUDAStream()
                 );
                 return use_fp8 ? pybind11::make_tuple(fetched[i], fetched_sf[i]) : pybind11::cast(fetched[i]);

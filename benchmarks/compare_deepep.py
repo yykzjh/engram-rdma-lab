@@ -89,14 +89,9 @@ def worker(local_rank, args):
     torch.cuda.synchronize()
     del storages, sfs
     include = Path(deep_ep.__file__).parent / "include/deep_ep/impls/engram"
-    config_text = (include / "local_cpu_config.cuh").read_text()
-    actual_local = int(re.search(r"#define EP_ENGRAM_LOCAL_CPU_READ (\d+)", config_text)[1])
-    actual_lanes = int(re.search(r"#define EP_ENGRAM_LOCAL_COPY_LANES (\d+)", config_text)[1])
-    assert actual_local == args.local_cpu_read and actual_lanes == args.local_copy_lanes
-    actual_distributed = int(re.search(r"#define EP_ENGRAM_LOCAL_COPY_DISTRIBUTED (\d+)", config_text)[1])
-    assert actual_distributed == args.local_copy_distributed
+    actual_local = int(os.environ.get("ENGRAM_READ_C2C", "0"))
     metadata = {
-        "local_cpu_read": bool(actual_local), "local_copy_lanes": actual_lanes, "local_copy_distributed": actual_distributed,
+        "local_cpu_read": bool(actual_local), "local_copy_lanes": 16,
         "kernel_sha256": {n: hashlib.sha256((include/n).read_bytes()).hexdigest()
                            for n in ["engram_fetch.cuh", "engram_fetch_wait.cuh", "local_cpu_config.cuh"]},
         "rank": rank, "indices_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
@@ -174,9 +169,6 @@ def worker(local_rank, args):
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument("--local-cpu-read", type=int, choices=[0,1], default=1)
-    p.add_argument("--local-copy-distributed", type=int, choices=[0,1], default=1)
-    p.add_argument("--local-copy-lanes", type=int, default=16)
     p.add_argument("--tokens", type=int, default=131072)
     p.add_argument("--rounds", type=int, default=10)
     p.add_argument("--warmups", type=int, default=3)

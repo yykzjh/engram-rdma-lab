@@ -20,5 +20,6 @@
     "destination": "experiments/umr_read_minimal/benchmark.cpp",
     "original_sha256": "83891c6bbc06873e2c4499c9607828ad985b38348b3808ba7bbba1a00a49516d",
     "note": "Earliest 24x256B primitive validation; byte-for-byte source preservation, not the current Engram workload"
-  }
+  },
+  "current_tree_note": "Historical experiment source directories were removed at user request when retaining only READ and SGE WRITE; source remains in Git commit 91a6eba."
 }

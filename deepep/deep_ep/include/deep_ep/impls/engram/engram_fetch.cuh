@@ -87,11 +87,11 @@ engram_fetch_impl(
         const bool is_local_peer = EP_ENGRAM_LOCAL_CPU_READ &&
             issue_layout.rdma_peer_idx == nccl_dev_comm.rank / kNumRanksPerRDMAPeer;
 
-        if (is_local_peer && EP_ENGRAM_LOCAL_COPY_DISTRIBUTED) {
+        if (is_local_peer) {
             // Token-tile scheduling is appropriate for asynchronous GIN issue,
             // but leaves tiny CPU gathers on one warp. Spread current rows over
             // all local issue warps instead; no routing plan is cached.
-            constexpr int kCopyLanes = EP_ENGRAM_LOCAL_COPY_LANES;
+            constexpr int kCopyLanes = 16;
             constexpr int kRowsPerWarp = kWarpSize / kCopyLanes;
             constexpr int kVectors = engram_layout_t::kNumHiddenBytes / sizeof(int4);
             EP_STATIC_ASSERT(engram_layout_t::kNumHiddenBytes % sizeof(int4) == 0,
@@ -151,33 +151,7 @@ engram_fetch_impl(
                 num_issued_requests += batch_size;
                 const auto options = rings_doorbell ? ncclGinOptFlagsDefault : ncclGinOptFlagsAggregateRequests;
 
-                if (is_local_peer) {
-                    // Context maps every shard in this GIN group into this
-                    // GPU's VA and registers one window for each CPU alias.
-                    // Get the LOCAL registered alias, never a remote LSA pointer.
-                    constexpr int kCopyLanes = EP_ENGRAM_LOCAL_COPY_LANES;
-                    constexpr int kRowsPerWarp = kWarpSize / kCopyLanes;
-                    constexpr int kVectors = engram_layout_t::kNumHiddenBytes / sizeof(int4);
-                    EP_STATIC_ASSERT(engram_layout_t::kNumHiddenBytes % sizeof(int4) == 0,
-                                     "Local copy requires vector-aligned rows");
-                    for (int row = lane_idx / kCopyLanes; row < batch_size; row += kRowsPerWarp) {
-                        const auto request = warp_pending_requests[pending_head + row];
-                        const auto entry_idx = static_cast<int>(request);
-                        const auto global_idx = static_cast<int>(request >> 32);
-                        const auto peer_local_idx = global_idx - peer_global_idx_begin;
-                        const auto shard = peer_local_idx / num_entries_per_rank;
-                        const auto row_idx = peer_local_idx % num_entries_per_rank;
-                        const auto src_offset = engram_layout_t::get_storage_byte_offset(layer_idx, row_idx);
-                        const auto dst_offset = engram_layout_t::get_recv_byte_offset(
-                            layer_idx, entry_idx, kNumMaxTokens);
-                        const auto* src = static_cast<const int4*>(
-                            ncclGetLocalPointer(storage_windows[shard], src_offset));
-                        auto* dst = reinterpret_cast<int4*>(math::advance_ptr(fetched, dst_offset));
-                        #pragma unroll
-                        for (int v = lane_idx % kCopyLanes; v < kVectors; v += kCopyLanes)
-                            dst[v] = __ldg(src + v);
-                    }
-                } else if (lane_idx < batch_size) {
+                if (lane_idx < batch_size) {
                     const auto request = warp_pending_requests[pending_head + lane_idx];
                     const auto entry_idx = static_cast<int>(request);
                     const auto global_idx = static_cast<int>(request >> 32);
@@ -235,12 +209,6 @@ engram_fetch_impl(
                 issue_batch(num_pending_requests, true);
                 __syncwarp();
             }
-
-            // Local writes finish in this kernel; same-stream layer hooks see
-            // them after kernel completion. There are no local GIN requests to
-            // flush or request descriptors to initialize.
-            if (is_local_peer)
-                continue;
 
             if (ptx::elect_one_sync()) {
                 auto* issue_counter = workspace.get_issue_counter_ptr(

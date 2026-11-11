@@ -14,14 +14,14 @@ struct Channel{
 };
 // Invariant lengths/lkeys are initialized once. Current row addresses, SGE
 // counts and destination offsets are constructed for every timed fetch.
-static int post_write(Channel&c,const Group*groups,unsigned n,const std::vector<ibv_sge>&sges,Stats&s){
-    auto start=Clock::now();unsigned offset=0;
+static int post_write(Channel&c,const Group*groups,unsigned n,const std::vector<ibv_sge>&sges){
+    unsigned offset=0;
     for(unsigned q=0;q<unsigned(c.o.qps)&&q<n;++q)ibv_wr_start(ibv_qp_to_qp_ex(c.r.qps[q]));
     for(unsigned i=0;i<n;++i){auto*x=ibv_qp_to_qp_ex(c.r.qps[i%c.o.qps]);x->wr_id=i;x->wr_flags=i+c.o.qps>=n?IBV_SEND_SIGNALED:0;
         ibv_wr_rdma_write(x,c.peer.dst_rkey,c.peer.dst_addr+uint64_t(groups[i].dst_row)*ROW);ibv_wr_set_sge_list(x,groups[i].count,sges.data()+offset);offset+=groups[i].count;}
     int completions=0;
     for(unsigned q=0;q<unsigned(c.o.qps)&&q<n;++q){verbs_check(ibv_wr_complete(ibv_qp_to_qp_ex(c.r.qps[q])),"submit WRITE WQEs");++completions;}
-    s.verbs_post_us+=us(start);return completions;
+    return completions;
 }
 static void publish_gpu_done(Channel&c,uint64_t epoch,unsigned count){
     for(unsigned q=0;q<count;++q){ibv_sge sg{reinterpret_cast<uintptr_t>(&epoch),8,0};ibv_send_wr wr{},*bad=nullptr;

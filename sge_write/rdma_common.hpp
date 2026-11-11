@@ -5,6 +5,7 @@
 #include <cuda.h>
 #include <nvrtc.h>
 #include <thread>
+#include <atomic>
 #include <mutex>
 #include <exception>
 #include <sched.h>
@@ -50,7 +51,8 @@ static void verbs_check(int rc, const char* what) {
 constexpr uint64_t MAGIC = 0x5347455752495445ULL;
 constexpr size_t ROW = 256, GUARD = 4096;
 struct Options {
-    bool owner=false,quick_ack=false;
+    bool owner=false;
+    bool async_check=false;
     std::string host,device="mlx5_bond_0",ips="127.0.0.1,127.0.0.1",distribution="stratified",indices_dir,dump_indices;
     int port=26700,gid=3,gpu=0,pool=1024,qps=4,rank=0,world=8,rows=24,groups=512,rounds=20,warmups=1;
     int table_rows=524288+524309,merge_rows=30,owner_windows=1,owner_poll_us=0,gin_contexts=4;
@@ -60,6 +62,9 @@ struct Options {
 };
 static Options options(int argc,char**argv){
     Options o;
+    auto env_flag=[](const char* name){const char* v=std::getenv(name);if(!v)return false;check(std::string(v)=="0"||std::string(v)=="1",std::string(name)+" must be 0 or 1");return *v=='1';};
+    o.hybrid_local=env_flag("ENGRAM_WRITE_C2C");
+    o.async_check=env_flag("ENGRAM_WRITE_ASYNC_CHECK");
     for(int i=1;i<argc;++i){
         std::string k=argv[i];check(i+1<argc,"missing option value");std::string v=argv[++i];
         if(k=="--ips")o.ips=v; else if(k=="--distribution")o.distribution=v;
@@ -76,7 +81,7 @@ static Options options(int argc,char**argv){
         else if(k=="--engine")check(v=="ex","extended verbs required");
         else if(k=="--protocol")check(v=="frame","whole-fetch protocol required");
         else if(k=="--profile-routes")check(v=="0","primary timing has no extra events");
-        else if(k=="--compact-qp"||k=="--compact-request"||k=="--done-gpu"||k=="--gpu-request"||k=="--vary-indices"||k=="--gpu-graph"||k=="--adaptive-grid"||k=="--compact-done"||k=="--hybrid-local")check(v=="1","required WRITE path feature");
+        else if(k=="--compact-qp"||k=="--compact-request"||k=="--done-gpu"||k=="--gpu-request"||k=="--vary-indices"||k=="--gpu-graph"||k=="--adaptive-grid"||k=="--compact-done")check(v=="1","required WRITE path feature");
         else throw std::runtime_error("unknown SGE WRITE option "+k);
     }
     check(o.rank>=0&&o.rank<8&&o.groups>=1&&o.groups<=262144,"invalid rank/tokens");
@@ -97,9 +102,9 @@ static void pin_core(const Options& o, int peer, bool owner) {
     cpu_set_t set; CPU_ZERO(&set); CPU_SET(bases[local] + (owner ? 0 : 32) + peer, &set);
     check(!pthread_setaffinity_np(pthread_self(), sizeof(set), &set), "pin CPU");
 }
+inline std::atomic<uint64_t> control_socket_sends{0},control_socket_recvs{0};
 struct Socket {
     int fd = -1;
-    bool quick_ack = false;
     ~Socket() { if (fd >= 0) close(fd); }
     void tune() {
         int one = 1;
@@ -109,6 +114,7 @@ struct Socket {
         check(!setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &t, sizeof(t)), "SO_SNDTIMEO");
     }
     void send(const void* p, size_t n, int flags = 0) {
+        ++control_socket_sends;
         const char* b = static_cast<const char*>(p);
         while (n) {
             ssize_t s = ::send(fd, b, n, MSG_NOSIGNAL | flags);
@@ -117,22 +123,19 @@ struct Socket {
         }
     }
     void recv(void* p, size_t n) {
+        ++control_socket_recvs;
         char* b = static_cast<char*>(p);
         while (n) {
             ssize_t s = ::recv(fd, b, n, 0);
             if (s < 0 && errno == EINTR) continue;
             check(s > 0, "control recv"); b += s; n -= s;
         }
-        if (quick_ack) {
-            int one = 1;
-            check(!setsockopt(fd, IPPROTO_TCP, TCP_QUICKACK, &one, sizeof(one)), "TCP_QUICKACK");
-        }
+
     }
     template<class T> void send(const T& v) { send(&v, sizeof(v)); }
     template<class T> void recv(T& v) { recv(&v, sizeof(v)); }
 };
 static void connect(Socket& s, const Options& o) {
-    s.quick_ack = o.quick_ack;
     sockaddr_in addr{}; addr.sin_family = AF_INET; addr.sin_port = htons(o.port);
     if (o.owner) {
         Socket listen;
@@ -159,13 +162,11 @@ static void connect(Socket& s, const Options& o) {
 // This private control protocol is for homogeneous little-endian hosts only.
 // Explicit version/ABI sizes are checked before any buffer lengths are trusted.
 struct Hello {
-    uint64_t magic=MAGIC;uint32_t version=9,bytes=sizeof(Hello);
+    uint64_t magic=MAGIC;uint32_t version=11,bytes=sizeof(Hello);
     uint32_t pool=0,qps=0,groups=0,table_rows=0,merge_rows=0;
     uint64_t dst_addr=0,done_addr=0;uint32_t dst_rkey=0,done_rkey=0;
 };
 struct Endpoint {uint32_t qpn=0,psn=0x1234;uint8_t gid[16]{};};
-struct Stats {double layout_us=0,data_us=0,verbs_post_us=0,cq_wait_us=0;};
-struct Response {uint32_t groups=0,status=0;Stats stats;uint64_t fetch_id=0;};
 static uint64_t pattern(uint32_t row, unsigned word) {
     return (0x9e3779b97f4a7c15ULL * (uint64_t(row) + 1)) ^
            (0xd1b54a32d192ed03ULL * (uint64_t(word) + 1));

@@ -152,3 +152,31 @@ extern "C" __global__ void scatter_remote_rows(const unsigned long long* input,
     for(unsigned long long i=(unsigned long long)blockIdx.x*blockDim.x+threadIdx.x;i<words;i+=(unsigned long long)gridDim.x*blockDim.x)
         output[size_t(positions[i/32])*32+i%32]=input[i];
 }
+
+// Application-side GPU producer/consumer used ONLY by the asynchronous test.
+// They deliberately change every frame's raw indices; no CPU input download or
+// per-frame host fence participates in this producer -> fetch -> consumer chain.
+extern "C" __global__ void async_producer(unsigned* input,unsigned tokens,unsigned rank,unsigned epoch,unsigned uniform) {
+    unsigned rows=tokens*48;
+    for(unsigned at=blockIdx.x*blockDim.x+threadIdx.x;at<rows;at+=gridDim.x*blockDim.x){
+        unsigned n=at<tokens*24?524288:524309,global=n*8,interval=global/24;
+        unsigned x=at+rank*1009+epoch*97531+12345;x^=x>>16;x*=0x7feb352d;x^=x>>15;x*=0x846ca68b;x^=x>>16;
+        input[at]=uniform?x%global:(at%24)*interval+x%interval;
+    }
+}
+extern "C" __global__ void async_consumer(const unsigned* indices,const unsigned long long* output,
+        const unsigned* scales,unsigned tokens,unsigned epoch,unsigned long long* verdicts,unsigned frame) {
+    unsigned rows=tokens*48;
+    for(unsigned at=blockIdx.x*blockDim.x+threadIdx.x;at<rows;at+=gridDim.x*blockDim.x){
+        unsigned layer=at>=tokens*24,n=layer?524309:524288,x=indices[at];
+        unsigned tag=(x/n)*(524288+524309)+(layer?524288:0)+x%n;
+        unsigned bad=0;
+        for(unsigned word=0;word<32;++word){unsigned long long expected=0x9e3779b97f4a7c15ULL*(tag+1ULL)^0xd1b54a32d192ed03ULL*(word+1ULL);bad+=output[size_t(at)*32+word]!=expected;}
+        unsigned token=(at%(tokens*24))/24,slot=at%24;
+        unsigned a=0x3f800000U|((x+layer*17)&0x7fffffU),b=0x40000000U|((x*3+layer*29)&0x7fffffU);
+        bad+=scales[layer*tokens*48+token+slot*2*tokens]!=a;
+        bad+=scales[layer*tokens*48+token+(slot*2+1)*tokens]!=b;
+        if(bad)atomicAdd(verdicts+frame*2,(unsigned long long)bad);
+    }
+    if(!blockIdx.x&&!threadIdx.x)verdicts[frame*2+1]=epoch;
+}

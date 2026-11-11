@@ -31,7 +31,7 @@ static void launch_engram_fetch(const deep_jit::NoRefPtr& nccl_dev_comm, const n
                                 const int& num_tokens, const int& num_max_tokens,
                                 const int& num_rdma_peers, const int& num_ranks_per_rdma_peer,
                                 const int& num_qps, const int& flush_depth,
-                                const int64_t& num_timeout_cycles,
+                                const int64_t& num_timeout_cycles, const bool& use_c2c,
                                 const at::cuda::CUDAStream& stream) {
     constexpr int kNumSFWarpsPerSM = 4;
     const auto num_sms = jit->device.get_num_sms();
@@ -63,12 +63,13 @@ static void launch_engram_fetch(const deep_jit::NoRefPtr& nccl_dev_comm, const n
 
     // Compile
     const auto kernel = jit->compile("engram_fetch", std::format(R"(
+#define EP_ENGRAM_LOCAL_CPU_READ {}
 #include <deep_ep/impls/engram/engram_fetch.cuh>
 
 static void __instantiate_kernel() {{
     auto ptr = reinterpret_cast<void*>(&deep_ep::engram::{});
 }}
-)", func_name));
+)", static_cast<int>(use_c2c), func_name));
 
     // Launch
     jit->launch(
@@ -90,7 +91,7 @@ static void __instantiate_kernel() {{
 static void launch_engram_fetch_wait(ncclGinRequest_t* last_gin_requests,
                                      const deep_jit::NoRefPtr& nccl_dev_comm, const ncclWindow_t& nccl_window,
                                      const int& num_rdma_peers,
-                                     const int& num_active_gin_contexts,
+                                     const int& num_active_gin_contexts, const bool& use_c2c,
                                      const at::cuda::CUDAStream& stream) {
     constexpr int kNumEngramFetchWaitThreads = 1024;
 
@@ -98,12 +99,13 @@ static void launch_engram_fetch_wait(ncclGinRequest_t* last_gin_requests,
     const auto func_name = std::format(
         "engram_fetch_wait_impl<{}, {}>", num_rdma_peers, kNumEngramFetchWaitThreads);
     const auto kernel = jit->compile("engram_fetch_wait", std::format(R"(
+#define EP_ENGRAM_LOCAL_CPU_READ {}
 #include <deep_ep/impls/engram/engram_fetch_wait.cuh>
 
 static void __instantiate_kernel() {{
     auto ptr = reinterpret_cast<void*>(&deep_ep::engram::{});
 }}
-)", func_name));
+)", static_cast<int>(use_c2c), func_name));
 
     // Launch
     jit->launch(
