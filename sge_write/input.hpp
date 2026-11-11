@@ -38,6 +38,8 @@ public:
     }
 };
 static uint64_t frame_bytes(const Options& o) { return uint64_t(o.groups) * o.entries.size() * o.rows * ROW; }
+// 与 benchmarks/test_read.py 的原始MT19937 uint32序列一致：
+// 单整数种子，按layer/token/slot顺序取随机数后取模。每轮epoch不同，不缓存索引内容。
 static std::vector<uint32_t> generate_indices(const Options& o, int round = 0) {
     std::vector<uint32_t> result(frame_bytes(o) / ROW);
     std::mt19937 rng(12345 + o.rank * 1009 + round * 97);

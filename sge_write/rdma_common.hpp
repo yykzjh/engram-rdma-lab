@@ -53,7 +53,7 @@ constexpr size_t ROW = 256, GUARD = 4096;
 struct Options {
     bool owner=false;
     bool async_check=false;
-    std::string host,device="mlx5_bond_0",ips="127.0.0.1,127.0.0.1",distribution="stratified",indices_dir,dump_indices;
+    std::string host,device="mlx5_bond_0",ips="127.0.0.1,127.0.0.1",distribution="stratified";
     int port=26700,gid=3,gpu=0,pool=1024,qps=4,rank=0,world=8,rows=24,groups=512,rounds=20,warmups=1;
     int table_rows=524288+524309,merge_rows=30,owner_windows=1,owner_poll_us=0,gin_contexts=4;
     std::vector<int> entries{524288,524309};
@@ -68,7 +68,6 @@ static Options options(int argc,char**argv){
     for(int i=1;i<argc;++i){
         std::string k=argv[i];check(i+1<argc,"missing option value");std::string v=argv[++i];
         if(k=="--ips")o.ips=v; else if(k=="--distribution")o.distribution=v;
-        else if(k=="--indices-dir")o.indices_dir=v;else if(k=="--dump-indices")o.dump_indices=v;
         else if(k=="--tokens")o.groups=std::stoi(v);else if(k=="--rounds")o.rounds=std::stoi(v);
         else if(k=="--warmups")o.warmups=std::stoi(v);else if(k=="--rank")o.rank=std::stoi(v);
         else if(k=="--port")o.port=std::stoi(v);else if(k=="--gid")o.gid=std::stoi(v);

@@ -1,55 +1,19 @@
 # Engram RDMA Lab
 
-本仓库只保留两套通信设计：**原 DeepEP Engram READ** 与 **SGE WRITE**。两者均可通过环境变量启用节点内 GPU 直接读取 CPU 词表的 C2C 路径。跨机分别使用 NCCL GIN GET 与原生 verbs SGE WRITE。
+只保留两套 CPU 词表查询方案：
 
-| 设计 | 环境变量 | `0`（默认） | `1` |
-|---|---|---|---|
-| DeepEP Engram READ | `ENGRAM_READ_C2C` | 保持 GIN GET 查询路径 | 同节点 CPU 词表由 GPU 直接 load，跨节点保持 GIN GET |
-| SGE WRITE | `ENGRAM_WRITE_C2C` | 所有 owner 均通过 SGE WRITE 返回数据 | 同节点由 GPU 直接 load，跨节点由 CPU owner SGE WRITE |
+| 方案 | 测试入口 | 节点内 C2C 开关（默认 0） |
+|---|---|---|
+| DeepEP Engram READ：GPU 发起 GIN GET | `benchmarks/test_read.py` | `ENGRAM_READ_C2C=1` |
+| SGE WRITE：GPU 发请求，CPU owner 提交 verbs WRITE | `build/sge_write/engram_sge_write` | `ENGRAM_WRITE_C2C=1` |
 
-开关在 Buffer / 通信对象初始化前设置，生命周期内固定。READ 的选择写入 JIT 源码，因此 fetch 和 wait 始终一致，两个值共用同一个 runtime / JIT cache，无需修改头文件或准备多份安装。C2C 开关只改变词表数据路径；FP8 scales 继续使用相同的节点内 GPU 分片布局。
+开关在初始化前设置。C2C 开启后，同机 GPU 直接读 CPU 词表；跨机仍走各自的 GET / WRITE。两套测试固定为两机、每机 4 GPU；2 层分片表（524288 / 524309 行/rank），每 token 每层 24 行，FP8 256B/行及两个 FP32 scales。
 
-旧独立 GET、CPU 索引规划器、READ+UMR、逐 token WRITE、早期原语等原型代码已从当前主分支移除。历史版本与测试结果仍可从 Git 提交 `91a6eba` 追溯。原 DeepEP 工作区只保留用户的三个学习注释文件，所有功能开发位于本仓库。
+## 构建
 
-## 目录
+需要 Linux、CUDA Driver/Toolkit/NVRTC、GPUDirect RDMA、mlx5 verbs/DevX、支持 GDAKI 的匹配 NCCL host/device 头文件与库、PyTorch、NumPy、Open MPI、CMake；DeepEP 使用支持 C++20 的 GCC 13。节点需支持 GPU 直接访问 CPU 内存，WRITE 的 GPU DONE 要求原生 GPUDirect OWNER ordering。
 
-- `deepep/`：Engram API / kernels，以及所需的 Context、VMM、GIN、JIT 通用依赖；不包含完整 EP/PP/Bucket 实现。
-- `sge_write/`：GPU 发请求、CPU owner 构造 SGE WRITE、GPU 等待 DONE 和重排。
-- `benchmarks/`、`sge_write/async_validation.hpp`：完整正确性与异步 producer → fetch → consumer 验证。
-- `tools/`：两机启动、共用输入生成、runtime 打包和结果统计。
-- `results/`：原始样本、完整 fetch 时延、带宽与验证报告。
-- `provenance/`：上游版本、构建、迁移与源码哈希记录。
-
-## WRITE 的 GPU 控制路径
-
-每次 fetch：
-
-1. requester GPU 从当前原始索引计算 owner、计数和前缀，打包当前行索引与输出位置。
-2. GPU 用 GIN PUT 将行索引和请求元数据写入远端 owner 的 CPU 注册邮箱，并发布 ready 信号。节点内控制邮箱通过映射指针访问。
-3. owner CPU 持久服务线程读取邮箱，为当前请求构造最多 30 个 SGE 的 WRITE。可合并同一 requester/owner 的多个 token，但不缓存索引相关的 SGEs。
-4. owner 完成数据后，通过每个活跃数据 QP 的 RDMA WRITE 发布 requester GPU DONE。
-5. requester GPU 等待全部 DONE，将 owner-major staging 重排到最终输出。C2C 打开时，本地行直接写最终位置。
-
-初始化使用 MPI/TCP 交换地址、rkey 和 QP 信息；**forward 不使用 TCP 请求/DONE/ACK，也不下载原始 GPU 索引到 requester CPU**。owner CPU 仍负责生成、提交数据 WQE；索引仍会由 GPU DMA 到 owner CPU 邮箱。这里的异步 GPU 控制不等于取消 owner CPU 数据服务。
-
-每个 owner 的内部发送窗口用于限制 WR/CQ 容量，没有逐窗口网络 ACK。容量缓冲区、QP/MR、模型、Graph 在初始化建立；当前索引的路由、行列表、SGEs 和重排位置在每次 fetch 中重新产生。
-
-## 异步 forward 接口
-
-`GpuFetchGraph::enqueue(CUstream inference_stream)` 只将 fetch Graph 排到调用方的 CUDA stream，不执行主机等待、索引 D2H、TCP 通信或用户级资源分配。后续依赖输出的 GPU kernel 排在同一 stream 即可；跨 stream 使用 CUDA event 建立依赖。
-
-```cpp
-// Buffer、词表、通信和 Graph 已在初始化完成。
-fetch.enqueue(inference_stream);
-// 将模型中消费 embedding 的 kernel 排到 inference_stream。
-// 如需在另一 stream 消费，先 record event，再由该 stream wait event。
-```
-
-同一 Buffer 的输入、输出和工作区按 stream 顺序复用；可连续异步排队多个 forward。跨 stream 并发需要独立 Buffer 或外部依赖管理。测试 harness 的计时/校验等待位于 enqueue 接口之外。异步测试在 GPU 生成不同索引，并在 GPU 逐帧校验 embedding 和 scales，最后只做一次主机同步。
-
-## 构建与运行
-
-需要 Linux、CUDA Toolkit / Driver / NVRTC、GPUDirect RDMA、mlx5 verbs/DevX、匹配的 NCCL host/device GDAKI、PyTorch、MPI、CMake 和支持 C++20 `std::format` 的编译器。本次环境为两机 L20A / Grace，每机 4 GPU，CX7、MTU 4096、GID 3；CPU affinity 和 HCA 名称需按机器调整。
+在两机相同绝对路径构建或同步源码与构建产物：
 
 ```bash
 export NCCL_ROOT=/path/to/nccl
@@ -59,51 +23,82 @@ export CXX=g++-13 MAX_JOBS=4
 cmake -S sge_write -B build/sge_write -DNCCL_ROOT="$NCCL_ROOT" \
   -DMPI_CXX_COMPILER=/path/to/mpi/bin/mpic++
 cmake --build build/sge_write -j4
-python tools/prepare_runtime.py --package deepep/deep_ep --output /absolute/path/runtime
-python tools/export_inputs.py --generator build/sge_write/export_indices \
-  --output /absolute/path/inputs --rounds 20
 ```
 
-两机需具有相同的源码、二进制、PTX、runtime 与绝对路径；输入文件也同步到两机。脚本使用已有 SSH/MPI 凭据并检查 GPU 空闲，不停止其他作业或修改系统/NIC 配置。
+使用搬迁后的 HPC-X / Open MPI 时，在构建和运行前设置 `OPAL_PREFIX=/path/to/mpi`，使编译器 wrapper 能找到当前安装的配置文件。
+
+两机分别加载已有的 CUDA/NCCL/MPI 环境，并设置（HCA、网口、GID、CPU affinity 按机器调整）：
 
 ```bash
-python tools/run_matrix.py --configs configs/comparison.json \
-  --hosts NODE_A,NODE_B --ssh-port 22 --mpi-prefix /path/to/mpi \
-  --mpirun /path/to/mpi/bin/mpirun --env-script /path/to/runtime-env.sh \
-  --runtime-root /absolute/path/runtime \
-  --write-binary /absolute/path/build/sge_write/engram_sge_write \
-  --indices /absolute/path/inputs --output /absolute/path/new-results
+export PYTHONPATH="$PWD/deepep"
+export NCCL_SOCKET_IFNAME=eth0
+export NCCL_IB_HCA=mlx5_bond_0,mlx5_bond_1,mlx5_bond_2,mlx5_bond_3
+export NCCL_IB_GID_INDEX=3 NCCL_CROSS_NIC=0 NCCL_GIN_TYPE=3
+export NCCL_GIN_GDAKI_MAX_QP_RD_ATOMIC=8
+export NCCL_GIN_GDAKI_MAX_DEST_RD_ATOMIC=16
+export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
 ```
 
-独立运行可用 `ENGRAM_READ_C2C=1` / `ENGRAM_WRITE_C2C=1`，或启动工具的 `--c2c 1`。READ 默认原路径。`tools/run_write.py --async-check --rounds 8 ...` 执行连续异步 forward 验证。
+使用 NCCL 实际检测的 G=4，无显式 min_stride 覆盖。128K 示例用 READ atomic=8；测试其他规模时，历史配置为 T=1 或 T≥131072 用8，其余用16。测试前自行确认 GPU 空闲，不与业务负载并行。
 
-WRITE harness 直接调用 C++ `mt19937` 生成上层输入，DeepEP 读取同一函数导出的文件。种子 `12345 + rank*1009 + epoch*97`。`--indices` 用于这个共用生成器的固定场景，不接受任意文件替换后仍假定 WRITE 输入相同。异步验证另用 GPU producer 动态生成输入并由 GPU consumer 检查。
+## READ 测试
+
+两台机器同时运行，`MASTER_ADDR` 为节点 A 的可达地址；这里 `WORLD_SIZE=2` 表示节点数，程序在每节点启动4个进程。输出目录分别保存本机4个 ranks 的 JSON。
+
+```bash
+# 两机均设置
+export MASTER_ADDR=NODE_A MASTER_PORT=23890 WORLD_SIZE=2
+export ENGRAM_READ_C2C=1
+
+# 节点 A
+RANK=0 python benchmarks/test_read.py --tokens 131072 --rounds 20 \
+  --distribution uniform --cuda-graph --output-dir /absolute/path/read-results
+
+# 节点 B
+RANK=1 python benchmarks/test_read.py --tokens 131072 --rounds 20 \
+  --distribution uniform --cuda-graph --output-dir /absolute/path/read-results
+```
+
+去掉 `--cuda-graph` 可测普通 fetch/hook 路径。输入直接生成，每轮变化，无外部索引文件或 runtime 打包步骤。
+
+## SGE WRITE 测试
+
+在节点 A 执行；需要已有 SSH/MPI 凭据，两个节点的工作目录、二进制、旁边的 `gpu_request.ptx` 及运行库路径一致。MPI 的 `-x` 将当前环境传给远端；远端需能定位相同版本的 CUDA/NCCL/MPI 动态库。
+
+```bash
+export ENGRAM_WRITE_C2C=1 ENGRAM_WRITE_ASYNC_CHECK=0
+mpirun -np 8 --host NODE_A:4,NODE_B:4 --map-by ppr:4:node --bind-to none \
+  --wdir "$PWD" \
+  -x PATH -x LD_LIBRARY_PATH \
+  -x NCCL_SOCKET_IFNAME -x NCCL_IB_HCA -x NCCL_IB_GID_INDEX \
+  -x NCCL_CROSS_NIC -x NCCL_GIN_TYPE \
+  -x NCCL_GIN_GDAKI_MAX_QP_RD_ATOMIC -x NCCL_GIN_GDAKI_MAX_DEST_RD_ATOMIC \
+  -x OMP_NUM_THREADS -x ENGRAM_WRITE_C2C -x ENGRAM_WRITE_ASYNC_CHECK \
+  ./build/sge_write/engram_sge_write --ips NODE_A_IP,NODE_B_IP \
+  --tokens 131072 --rounds 20 --distribution uniform
+```
+
+`--ips` 使用两机可达的 IPv4 地址。root 环境按 Open MPI 要求增加 `--allow-run-as-root`。以非默认 SSH 端口启动时增加对应 MPI SSH 参数。
+
+同一入口的异步验证：将 `ENGRAM_WRITE_ASYNC_CHECK=1`、`--rounds 8`，其余命令相同。GPU producer → fetch → consumer 连续排队，最后只同步一次；检查每帧 embedding/scales、epoch 和 forward 期间 TCP 收发计数。默认模式逐轮同步计时和全量校验。
+
+## 学习代码
+
+建议按以下顺序阅读，关键处已补中文注释：
+
+- `sge_write/gpu_request.cpp`：初始化、CPU 邮箱布局、owner 持久服务与 SGE 构造。
+- `sge_write/gpu_request.cu`：GPU route/count/prefix/pack、发布 ready、等待每 QP DONE、C2C 与重排。
+- `sge_write/rdma.hpp`：多 SGE WRITE 提交、各 QP 的 data → DONE 顺序。
+- `sge_write/gpu_graph.hpp`：Graph 依赖、异步 `enqueue(stream)` 与同步测试包装。
+- `sge_write/async_validation.hpp`：同 stream 上游/下游如何衔接。
+- `deepep/deep_ep/buffers/engram.py`、`deepep/deep_ep/include/deep_ep/impls/engram/`：READ API 与 kernels。
+
+WRITE 的 `enqueue` 只提交 Graph；同 Buffer 按同 stream 顺序复用，跨 stream 使用 event 或独立 Buffer。owner CPU 仍负责每轮 SGE/WQE，索引仍由 GPU DMA 写入 owner CPU 邮箱；初始化 TCP 不进入 forward。WRITE 当前提供独立 C++ 接口，尚未接入 Python EngramBuffer API。
 
 ## 测量口径
 
-8 ranks 同时作为 requester，查询全部 8 个 CPU owner 的分片词表。两层每 rank 分别存储 524288 / 524309 行，每 token 每层查询 24 行，FP8 256B/行，另有两个 FP32 scale。`stratified` 为原 DeepEP 分段索引分布；`uniform` 允许任意 owner、空组和不连续输出槽位。
+两套入口每轮使用相同的 MT19937 原始 uint32 序列（种子 `12345+rank*1009+epoch*97`），支持 `stratified` / `uniform`；数据与 scales 全量校验。默认预热1轮、测20轮。输入生成/上传、初始化和校验位于计时外；当前索引处理、请求、传输、DONE、重排与 scales 位于完整 fetch 内。
 
-主指标为每轮 8 ranks 完整 fetch wall time 的最大值，再取 20 轮中位数；保留全部慢轮、均值、最大值。带宽分子为每 rank 逻辑 embedding 字节，使用十进制 GB/s，包含本地查询，不能当作网卡线速。scales 成本包含在时间中。各测点两套方案的 `max_tokens=T`，词表大小固定。
+取每轮8 ranks最大 wall time，再取各轮中位数，并保留慢轮。带宽分子只计每 rank embedding 逻辑字节，含本地查询，scales成本计入时间；不是单 NIC 线速。WRITE 额外使用 owner CPU 服务线程与 GPU staging。
 
-所有路由、请求、owner SGE/WQE、传输、DONE、重排和 scales 都在 fetch 内。模型写入、容量分配、QP/MR、JIT、Graph 初始化、上游输入生成/上传及结果校验不计入 fetch。
-
-固定 `NCCL_CROSS_NIC=0`、GDAKI，NCCL 实际检测 G=4，无用户 min_stride 覆盖。READ 使用 custom-stride rail 和 owner CPU 注册别名；WRITE 为 owner/requester 对建立 RC 数据通道，CROSS_NIC 仅约束它的 GIN 控制面。WRITE 每 rank 使用 4（C2C 开）或 8（C2C 关）个 CPU owner 服务线程和额外 staging。该对照包含整个设计与资源差异。
-
-## 本轮验证结果
-
-完整数据见[两套设计与 C2C 开关对照](results/2026-11-11-two-designs/)、[UMR 验证](results/2026-11-11-two-designs/UMR.md)、[异步 forward 验证](results/2026-11-11-two-designs/ASYNC.md)。
-
-131072 tokens、随机 owner 归属、20轮 max-rank 完整 fetch 中位数：
-
-| 设计 | C2C关 | C2C开 |
-|---|---|---|
-| READ | 201.91 ms / 7.98 GB/s | 105.91 ms / 15.21 GB/s |
-| SGE WRITE | 44.17 ms / 36.46 GB/s | 25.56 ms / 63.01 GB/s |
-
-UMR测试确实省掉每rank 1.5 GiB staging并取消GPU重排，但131072 tokens的分段/随机场景分别变为30.76/369.99ms，原路径约25.57/25.56ms。全部所测规模均无优势，当前主分支不保留UMR实现。随机布局约使用54k MKeys/rank，动态映射关键耗时约76.15ms；完整fetch包括这部分成本。
-
-异步测试每rank连续排队8个forward，6组共384个GPU消费样本全部正确。enqueue中位数2.45–2.90µs，所有rank返回时末轮GPU仍在执行，实际应用Socket收发增量0，无逐forward主机同步、无requester原始索引D2H。owner CPU数据服务仍然存在。
-
-## 来源与许可
-
-上游 DeepEP / DeepJIT 提交见 `provenance/source-origin.json`；保留 DeepSeek MIT 许可证与 `THIRD_PARTY_NOTICES.md`。当前原 DeepEP 学习注释保留情况见 `provenance/original-worktree-verification.json`。
+历史实验、性能原始样本和报告已从当前工作树清理，可在 Git 历史提交 `13a5e97` 查看。来源与许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 和各 LICENSE。

@@ -1,8 +1,0 @@
-{
-  "nodes_match": true,
-  "actual_nccl": {
-    "nccl_get_version": 23203,
-    "nccl_library_sha256": "c77f5ced2c4b538aad2b0ab88a9838e9eac9a68e22017863ffb0cff9c4f58745",
-    "library_filename": "libnccl.so.2"
-  }
-}

@@ -18,6 +18,8 @@ extern "C" __global__ void debug_gin(ncclDevComm_t comm) {
     }
 }
 extern "C" __global__ void route_counts(const unsigned* input, unsigned* counts, unsigned rows, unsigned tokens,unsigned rank,unsigned hybrid) {
+    // 输入按 [layer, token, slot] 展平。每个 block 处理最多 TILE=4096 行，
+    // 输出 counts[owner, block]。C2C 本地行直接 gather，不进入远端请求列表。
     __shared__ unsigned bins[8];
     if (threadIdx.x < 8) bins[threadIdx.x] = 0; __syncthreads();
     unsigned lo = blockIdx.x * TILE, hi = min(lo + TILE, rows);
@@ -31,6 +33,9 @@ extern "C" __global__ void route_counts(const unsigned* input, unsigned* counts,
 }
 extern "C" __global__ void route_prefix(const unsigned* counts, unsigned* offsets, unsigned* totals,
                                         unsigned* bases, unsigned blocks) {
+    // offsets[owner, block]：该 block 在本 owner 行列表中的起点；
+    // totals[owner]：该 owner 本轮总行数；bases[owner]：owner-major staging 起点。
+    // 这些前缀只依赖当前输入，必须每次 fetch 重新计算。
     unsigned owner = threadIdx.x;
     if (owner < 8) {
         unsigned sum = 0;
@@ -44,6 +49,8 @@ extern "C" __global__ void route_prefix(const unsigned* counts, unsigned* offset
 }
 extern "C" __global__ void route_pack(const unsigned* input, unsigned* local_rows, unsigned* positions,
         const unsigned* offsets, const unsigned* bases, unsigned rows, unsigned tokens,unsigned rank,unsigned hybrid) {
+    // warp 内先按 owner 聚合，再结合 block/owner 前缀压紧，无需 CPU 下载索引。
+    // local_rows 是发给 owner 的本地行号；positions 留在 GPU 用于最后重排。
     __shared__ unsigned counts[8*8], warp_bases[8*8], consumed[8];
     if (threadIdx.x < 8) consumed[threadIdx.x]=0; __syncthreads();
     unsigned lo=blockIdx.x*TILE, hi=min(lo+TILE,rows), lane=threadIdx.x%32, warp=threadIdx.x/32;
@@ -62,6 +69,8 @@ extern "C" __global__ void route_pack(const unsigned* input, unsigned* local_row
         __syncthreads();
         if(active){unsigned at_owner=warp_bases[owner*8+warp]+__popc(mask&((1u<<lane)-1));
             unsigned packed=bases[owner]+offsets[owner*gridDim.x+blockIdx.x]+at_owner;
+            // owner 的两层词表连续存储；第二层行号加上第一层 524288 行。
+            // positions[packed]=at 把 owner-major 接收位置对应回 token/slot 顺序。
             local_rows[packed]=(layer?524288:0)+x%n;positions[packed]=at;}
         __syncthreads();
     }
@@ -70,10 +79,15 @@ __device__ __forceinline__ void send_requests_body(ncclDevComm_t comm, ncclWindo
         const ncclWindow_t* targets, const unsigned long long* local_aliases,
         const unsigned* local_rows, const unsigned* totals, const unsigned* bases,
         unsigned rank, unsigned long long slot_bytes,unsigned hybrid, unsigned long long epoch) {
+    // 8 个 block 各负责一个 owner。每个 owner 中只访问 requester=rank 的槽。
+    // 请求格式：slot+0 ready，slot+8 {base:32,nr:32}，slot+64 uint32行号列表。
+    // base 是 GPU staging 的行偏移，不是最终输出偏移；目的地址/rkey 已在初始化交换。
     unsigned owner = blockIdx.x;
     if(hybrid && owner/4==rank/4)return;
     unsigned long long slot = rank * slot_bytes;
     if (owner / 4 == rank / 4) {
+        // C2C 关闭时，同机也由 CPU owner 服务，但请求直接写 CPU 邮箱映射。
+        // 所有线程先写行号并 system fence，block 同步后才由线程0发布 metadata/ready。
         auto* destination = reinterpret_cast<volatile unsigned*>(local_aliases[owner%4] + slot + 64);
         for (unsigned i=threadIdx.x;i<totals[owner];i+=blockDim.x) destination[i] = local_rows[bases[owner]+i];
         __threadfence_system(); __syncthreads();
@@ -81,6 +95,7 @@ __device__ __forceinline__ void send_requests_body(ncclDevComm_t comm, ncclWindo
             auto* metadata = reinterpret_cast<volatile unsigned long long*>(local_aliases[owner%4] + slot + 8);
             *metadata = uint64_t(totals[owner]) | (uint64_t(bases[owner]) << 32);
             auto* ready = reinterpret_cast<unsigned long long*>(local_aliases[owner%4] + slot);
+            // release 是“请求发布点”；CPU acquire 观察到本轮 epoch 后才能读请求。
             asm volatile("st.release.sys.global.u64 [%0], %1;" :: "l"(ready), "l"(epoch) : "memory");
         }
     } else if (!threadIdx.x) {
@@ -88,15 +103,22 @@ __device__ __forceinline__ void send_requests_body(ncclDevComm_t comm, ncclWindo
         // all four local owner inboxes, so a rail peer can target ANY owner.
         ncclWindow_t target = targets[owner%4];
         unsigned representative = owner/4*4 + rank%4;
+        // representative 保持 requester 的 local-rank，即走已建立的 rail 连接；
+        // targets[owner%4] 则选择实际 owner 的邮箱。representative CPU 不转发请求。
         ncclGin gin(comm, owner % comm.ginContextCount, NCCL_GIN_RESOURCE_SHARING_GPU);
         ncclTeam world = ncclTeamWorld(comm);
         uint64_t metadata = uint64_t(totals[owner]) | (uint64_t(bases[owner]) << 32);
         gin.putValue(world, representative, target, slot + 8, metadata);
         if (totals[owner]) {
+            // 行号 payload 完成后用 strong VA signal 将 owner ready 累加1。
+            // 同一 requester 每轮只发一次请求，远端 ready 从0累加为1、2、3...；
+            // 与 GPU epoch、owner 服务线程的预期 epoch 一一对应。
+            // metadata 的 putValue 与后续 strong signal 使用同一 GIN context。
             gin.put(world, representative, target, slot + 64, source, size_t(bases[owner])*4,
                     size_t(totals[owner])*4, ncclGin_StrongVASignalAdd{target, size_t(slot), 1},
                     ncclGin_None{}, ncclCoopThread{}, ncclGin_None{}, cuda::thread_scope_thread,
                     cuda::thread_scope_system, ncclGinOptFlagsDefault, ncclGin_SegmentMixed{});
+        // 空组也发布 ready：owner 仍回写 DONE，避免双方轮次失配或 GPU 永久等待。
         } else gin.signal(world, representative, ncclGin_StrongVASignalAdd{target, size_t(slot), 1});
     }
 }
@@ -108,6 +130,7 @@ extern "C" __global__ void send_gpu_requests(ncclDevComm_t comm,ncclWindow_t sou
     send_requests_body(comm,source,targets,aliases,rows,totals,bases,rank,stride,hybrid,epoch);
 }
 extern "C" __global__ void begin_fetch_epoch(unsigned long long* epoch){
+    // 序号留在 GPU，每次 Graph 执行自增，无需主机为下一帧修改 Graph 参数。
     if(!threadIdx.x && !blockIdx.x)++*epoch;
 }
 extern "C" __global__ void send_gpu_requests_epoch(ncclDevComm_t comm,ncclWindow_t source,
@@ -118,6 +141,9 @@ extern "C" __global__ void send_gpu_requests_epoch(ncclDevComm_t comm,ncclWindow
 }
 extern "C" __global__ void wait_gpu_epoch(const unsigned long long* flags,unsigned qps,
         const unsigned long long* epoch,const unsigned* totals,unsigned merge_rows,unsigned compact,unsigned rank,unsigned hybrid){
+    // 一个 block 等所有 owner/QP。线程 i 对应 owner=i/qps、qp=i%qps。
+    // 每个 owner 实际只用前 min(qps,ceil(nr/merge_rows)) 个 QP；空请求至少等QP0。
+    // C2C 本地 owner 不走 WRITE，也不等待它们的 DONE。
     unsigned i=threadIdx.x;
     if(i<8*qps && (!hybrid || (i/qps)/4!=rank/4)){
         unsigned active=compact?max(1u,min(qps,(totals[i/qps]+merge_rows-1)/merge_rows)):qps;
@@ -125,16 +151,22 @@ extern "C" __global__ void wait_gpu_epoch(const unsigned long long* flags,unsign
         const unsigned long long* p=flags+(i/qps)*16+i%qps;
         unsigned long long value,expected=*epoch,start=clock64();
         do{
+            // 同时保证“读到本轮序号”与 system acquire。数据可见性的另一前提是
+            // 初始化已检查 GPUDirect 原生 OWNER ordering；仅 volatile 轮询不够。
+            // GIN 的请求 ready 不覆盖 verbs 数据完成，必须独立等这些 per-QP DONE。
             asm volatile("ld.acquire.sys.global.u64 %0, [%1];":"=l"(value):"l"(p):"memory");
             if(value!=expected)__nanosleep(128);
             if(clock64()-start>100000000000ULL)asm volatile("trap;");
         }while(value!=expected);
         }
     }
+    // 所有等待线程退出后 kernel 才能结束；Graph 的重排节点依赖此节点完成。
     __syncthreads();
 }
 extern "C" __global__ void gather_local_cpu_rows(const unsigned* input,
         unsigned long long* output,const unsigned long long* aliases,unsigned rows,unsigned tokens,unsigned rank){
+    // C2C 路径直接读同机 owner CPU 词表，写最终 token-major 输出，跳过 staging。
+    // 本地槽位与远端 scatter 写入槽位互斥，因此两者可在 Graph 中并行。
     unsigned long long words=(unsigned long long)rows*32;
     for(unsigned long long i=(unsigned long long)blockIdx.x*blockDim.x+threadIdx.x;i<words;i+=(unsigned long long)gridDim.x*blockDim.x){
         unsigned at=i/32,layer=at>=tokens*24,n=layer?524309:524288,x=input[at],owner=x/n;
@@ -146,6 +178,8 @@ extern "C" __global__ void gather_local_cpu_rows(const unsigned* input,
 }
 extern "C" __global__ void scatter_remote_rows(const unsigned long long* input,
         unsigned long long* output,const unsigned* positions,const unsigned* totals){
+    // 仅搬运本轮远端总行数，而非整个 staging 容量。每行 32 个uint64=256B，
+    // positions 将合并接收的行恢复到原始 [layer,token,slot] 位置。
     __shared__ unsigned long long words;
     if(!threadIdx.x){words=0;for(int i=0;i<8;++i)words+=size_t(totals[i])*32;}
     __syncthreads();

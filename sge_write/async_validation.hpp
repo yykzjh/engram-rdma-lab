@@ -1,7 +1,7 @@
 #pragma once
-// A test harness, not part of enqueue(): upstream and dependent application
-// kernels surround fetch on the SAME externally supplied stream. The host queues
-// every forward before its single final stream synchronization.
+// WRITE同一测试入口中的异步验证模式，不是另一套fetch实现。
+// 模拟推理：上游GPU producer写本轮新indices -> fetch.enqueue(stream) -> GPU consumer。
+// 所有帧都排到同一个外部stream，共享Buffer按GPU执行顺序复用；循环内不主机同步。
 static void validate_async_forward(Gpu& gpu,GpuRouter& router,GpuFetchGraph& graph,const Options& o){
     CUstream inference=nullptr;cuda_check(cuStreamCreate(&inference,CU_STREAM_NON_BLOCKING),"inference stream");
     CUfunction producer,consumer;
@@ -19,12 +19,17 @@ static void validate_async_forward(Gpu& gpu,GpuRouter& router,GpuFetchGraph& gra
         unsigned epoch=frame+1;void*pa[]={&gpu.input,&tokens,&rank,&epoch,&uniform};
         cuda_check(cuLaunchKernel(producer,std::min(512U,(tokens*48+255)/256),1,1,256,1,1,0,inference,pa,nullptr),"upstream GPU indices");
         cuda_check(cuEventRecord(begins[frame],inference),"start async fetch timing");
+        // 此处仅测主机提交开销；GPU fetch时延由前后的同stream events单独测量。
         auto at=Clock::now();graph.enqueue(inference);enqueue_us.push_back(us(at));
         cuda_check(cuEventRecord(ends[frame],inference),"end async fetch timing");
         void*ca[]={&gpu.input,&gpu.output,&gpu.sf_output,&tokens,&epoch,&verdict,&frame};
+        // consumer在Graph外但紧随其后；它必须读到本帧完整embedding和scales。
+        // 下一帧producer又排在consumer之后，防止过早覆盖共享input/output。
         cuda_check(cuLaunchKernel(consumer,std::min(4096U,(tokens*48+255)/256),1,1,256,1,1,0,inference,ca,nullptr),"dependent GPU consumer");
     }
     double queue_us=us(queued_start);CUresult pending=cuEventQuery(ends.back());check(pending==CUDA_SUCCESS||pending==CUDA_ERROR_NOT_READY,"query queued completion");
+    // 排完所有forward后唯一一次主机等待，随后才回拷小型校验结果。
+    // 前后socket计数差用于确认初始化TCP没有进入forward热路径。
     cuda_check(cuStreamSynchronize(inference),"single final forward synchronization");
     const auto socket_messages=control_socket_sends.load()+control_socket_recvs.load()-sends_before-recvs_before;
     check(socket_messages==0,"TCP protocol entered asynchronous forward");

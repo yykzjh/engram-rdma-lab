@@ -31,6 +31,9 @@ struct Gpu {
         cuda_check(cuDeviceGetAttribute(&rdma_write_ordering, CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_WRITES_ORDERING,
                                        device), "query GPUDirect write ordering");
         std::fprintf(stderr, "GPU_RDMA_WRITE_ORDERING=%d\n", rdma_write_ordering);
+        // packed: NIC按owner合并写入的staging；output: 最终[layer,token,slot]输出。
+        // positions把packed行号映射到output行号。done_flags独立预留8owner*16QP。
+        // 所有通信地址生命周期覆盖整个Buffer；每轮只更新内容，不重新注册MR。
         bytes = frame_bytes(o);
         adaptive_grid = o.adaptive_grid;
         allocation_bytes = 2 * bytes + 3 * GUARD;
@@ -41,6 +44,9 @@ struct Gpu {
         packed = allocation + GUARD;
         output = packed + bytes + GUARD;
         if (o.done_gpu) {
+            // GPU运行中的wait kernel直接观察远端RDMA标志，需要设备保证OWNER可见性。
+            // per-QP发送顺序、system acquire和此硬件能力共同支撑“见DONE后读数据”。
+            // 当前路径不为缺少该能力的设备实现额外flush协议，故初始化直接拒绝。
             check(rdma_write_ordering >= CU_GPU_DIRECT_RDMA_WRITES_ORDERING_OWNER, "GPU DONE requires native owner ordering");
             done_flags = allocation + allocation_bytes - 2 * GUARD;
         }
@@ -50,6 +56,7 @@ struct Gpu {
         if(!allocate)cuda_check(cuPointerSetAttribute(&one, CU_POINTER_ATTRIBUTE_SYNC_MEMOPS, allocation), "SYNC_MEMOPS");
         cuda_check(cuMemAlloc(&positions, bytes / ROW * sizeof(uint32_t)), "GPU position map");
         cuda_check(cuMemAlloc(&input, bytes / ROW * sizeof(uint32_t)), "GPU raw indices");
+        // host_input仅供同步测试完成后的校验；异步forward不需要索引D2H工作区。
         if(!o.async_check)cuda_check(cuMemHostAlloc(reinterpret_cast<void**>(&host_input), bytes / ROW * sizeof(uint32_t),
                                  CU_MEMHOSTALLOC_PORTABLE), "host index transfer workspace");
         // Exactly the same scale-table partition as DeepEP: 8 owners / 4 local GPU shards.
