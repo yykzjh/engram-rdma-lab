@@ -8,6 +8,7 @@ Engram 通信实验的独立归档：DeepEP Engram 的 GIN GET／同机 CPU 直�
 |---|---|
 | `deepep/` | 从固定 DeepEP 提交抽取的 Engram、必要的 Context/VMM/GIN/JIT 依赖与 Python API、原 Engram 测试 |
 | `sge_write/` | 精简的 GPU 请求 + CPU owner 构造 SGEs + verbs WRITE + GPU DONE/重排实现 |
+| `experiments/umr_read_minimal/` | 最早的 UMR READ / SGE WRITE 原语验证，24×256B 微基准，仅作历史归档 |
 | `experiments/rdma_gather/` | 完整迁入的早期原型：普通 READ、READ + UMR、WRITE + SGE、目标 UMR、CPU/GPU 控制路径等 |
 | `benchmarks/` | 调用真实 `deep_ep.EngramBuffer.fetch` 的数据、FP8 scales 与完整 fetch 校验 |
 | `tools/` | 输入导出、隔离 runtime、两机 MPI 启动、固定配置矩阵、结果汇总 |
