@@ -1,0 +1,51 @@
+{
+  "gpu_models": [
+    "NVIDIA L20A, 580.105.08",
+    "NVIDIA L20A, 580.105.08",
+    "NVIDIA L20A, 580.105.08",
+    "NVIDIA L20A, 580.105.08"
+  ],
+  "gpu_apps_empty_both_nodes": true,
+  "matching_runtime_binaries": true,
+  "binary_hashes": {
+    "runtime-baseline": {
+      "_C.cpython-312-aarch64-linux-gnu.so": "89169a2daedc50713aed6671c6f259ec618b7262b4511cb1e903b27a9972c209",
+      "engram_fetch.cuh": "76a20af31e89478f2cdee58873d5c85b4ea5f46a09ced26b8a3252a00352cd99",
+      "engram_fetch_wait.cuh": "7692417f5c7522667aa97d4a8b53baf5fc45f28334980159f693fb9ff76f6ebe",
+      "local_cpu_config.cuh": "bbab1408d340fe217a008810f955bce03a8c310bb9b86648b6d5fb8fcd257e21"
+    },
+    "runtime-hybrid8": {
+      "_C.cpython-312-aarch64-linux-gnu.so": "89169a2daedc50713aed6671c6f259ec618b7262b4511cb1e903b27a9972c209",
+      "engram_fetch.cuh": "76a20af31e89478f2cdee58873d5c85b4ea5f46a09ced26b8a3252a00352cd99",
+      "engram_fetch_wait.cuh": "7692417f5c7522667aa97d4a8b53baf5fc45f28334980159f693fb9ff76f6ebe",
+      "local_cpu_config.cuh": "97ffc66f7d2df2b56abf9176ce61a2f71eb3cee8ea562b22f34d9f9fb194706a"
+    },
+    "runtime-hybrid16": {
+      "_C.cpython-312-aarch64-linux-gnu.so": "89169a2daedc50713aed6671c6f259ec618b7262b4511cb1e903b27a9972c209",
+      "engram_fetch.cuh": "76a20af31e89478f2cdee58873d5c85b4ea5f46a09ced26b8a3252a00352cd99",
+      "engram_fetch_wait.cuh": "7692417f5c7522667aa97d4a8b53baf5fc45f28334980159f693fb9ff76f6ebe",
+      "local_cpu_config.cuh": "ae9a4e55542c74e3693749ed6799adae37c982c24a5e9d170ef2506ff85367e2"
+    },
+    "runtime-hybrid32": {
+      "_C.cpython-312-aarch64-linux-gnu.so": "89169a2daedc50713aed6671c6f259ec618b7262b4511cb1e903b27a9972c209",
+      "engram_fetch.cuh": "76a20af31e89478f2cdee58873d5c85b4ea5f46a09ced26b8a3252a00352cd99",
+      "engram_fetch_wait.cuh": "7692417f5c7522667aa97d4a8b53baf5fc45f28334980159f693fb9ff76f6ebe",
+      "local_cpu_config.cuh": "a7448a1957c62ad9e0d84090fbb777268251470a2aaf495eb6936857629044c5"
+    },
+    "engram_sge_write": "a4176628417cdbfe02f0838310d4d266d611a2557f4b902dddb80c99d858fc4a",
+    "gpu_request.ptx": "f1d450749b51a4472cec2fcfbf5a4e3c886cf2fd67d2dd090901242ec25d4180",
+    "export_indices": "3d79b044504e78807f657d21248e5bdc56da0088c46bbfd1850d49a57e89ffcd"
+  },
+  "frozen_original_extension_sha256": "5d8e6c29632a247b7b72ce65d51a6aa94b3dda6dd471433502758d5c864d0c9d",
+  "task_and_containers_retained": true,
+  "common_environment": {
+    "NCCL_SOCKET_IFNAME": "eth0",
+    "NCCL_IB_HCA": "mlx5_bond_0,mlx5_bond_1,mlx5_bond_2,mlx5_bond_3",
+    "NCCL_IB_GID_INDEX": "3",
+    "NCCL_CROSS_NIC": "0",
+    "NCCL_GIN_TYPE": 3,
+    "NCCL_GIN_GDAKI_MAX_DEST_RD_ATOMIC": 16,
+    "OMP_NUM_THREADS": 1
+  },
+  "note": "The inherited NCCL_VERSION image environment string is not a runtime version query; actual library version is recorded separately."
+}

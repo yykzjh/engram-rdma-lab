@@ -1,0 +1,63 @@
+{
+  "configurations": 64,
+  "rank_samples_with_warmups": 10752,
+  "timed_world_rounds": 1280,
+  "ranks_per_round": 8,
+  "rounds_per_configuration": 20,
+  "warmups_per_configuration": 1,
+  "all_embedding_and_scale_checks_passed": true,
+  "read_input_sha256_checks_passed": 8064,
+  "write_exporter_byte_comparison_checks": 8,
+  "read_parameters_by_tokens": {
+    "1": {
+      "qps": 15,
+      "qp_depth": 1024,
+      "requester_rd_atomic_env": "8",
+      "responder_rd_atomic_env": "16"
+    },
+    "8": {
+      "qps": 15,
+      "qp_depth": 1024,
+      "requester_rd_atomic_env": "16",
+      "responder_rd_atomic_env": "16"
+    },
+    "64": {
+      "qps": 15,
+      "qp_depth": 1024,
+      "requester_rd_atomic_env": "16",
+      "responder_rd_atomic_env": "16"
+    },
+    "512": {
+      "qps": 15,
+      "qp_depth": 1024,
+      "requester_rd_atomic_env": "16",
+      "responder_rd_atomic_env": "16"
+    },
+    "4096": {
+      "qps": 15,
+      "qp_depth": 8192,
+      "requester_rd_atomic_env": "16",
+      "responder_rd_atomic_env": "16"
+    },
+    "32768": {
+      "qps": 25,
+      "qp_depth": 32768,
+      "requester_rd_atomic_env": "16",
+      "responder_rd_atomic_env": "16"
+    },
+    "131072": {
+      "qps": 100,
+      "qp_depth": 32768,
+      "requester_rd_atomic_env": "8",
+      "responder_rd_atomic_env": "16"
+    },
+    "262144": {
+      "qps": 201,
+      "qp_depth": 32768,
+      "requester_rd_atomic_env": "8",
+      "responder_rd_atomic_env": "16"
+    }
+  },
+  "primary_statistic": "median of each round maximum of 8 rank full-fetch wall times",
+  "slow_rounds_trimmed": false
+}

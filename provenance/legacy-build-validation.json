@@ -1,0 +1,72 @@
+{
+  "checks": [
+    {
+      "component": "8-rank historical prototype configure (GPU requester enabled)",
+      "exit": 0
+    },
+    {
+      "component": "8-rank READ+UMR/WRITE+SGE and GPU requester compile/link",
+      "exit": 0
+    },
+    {
+      "component": "Original UMR primitive configure",
+      "exit": 0
+    },
+    {
+      "component": "Original UMR primitive compile/link",
+      "exit": 0
+    }
+  ],
+  "source_sha256": {
+    "experiments/umr_read_minimal/benchmark.cpp": "83891c6bbc06873e2c4499c9607828ad985b38348b3808ba7bbba1a00a49516d",
+    "experiments/umr_read_minimal/CMakeLists.txt": "6d7af2646978e27950bc31df3cc6aa83fa66d015c9981dfe18f44d2eecb07aba",
+    "experiments/umr_read_minimal/README.md": "9a0d58875b1746bec453739a4d2610799caa586a532aea60901448b4b0c36238",
+    "experiments/rdma_gather/README.txt": "789b9c81001567d0e123bdd9d12b02e9675a379f1d4915ccd6b5e21f39734d1d",
+    "experiments/rdma_gather/benchmark_impl.hpp": "1cc63c6cf17f2fb3dcb303d86184f9926b4aa8f7afc653f62b99c43b55e64890",
+    "experiments/rdma_gather/rdma_common.hpp": "6aab9791c460faa7e7cc6883e87c8af4e5779aa9dfb8fc5d1785ca67c252cc86",
+    "experiments/rdma_gather/benchmark.cpp": "c1b3500b2af1198e790b51ab125613f6904016920dd9bc70e4f62ef8a26c3381",
+    "experiments/rdma_gather/planner_legacy.hpp": "595aad04105ed9138688dc3e91a779c4c529780e57d0f22cf22d678c8ecc5346",
+    "experiments/rdma_gather/compare_deepep.py": "66dc3907597cd08afcac49f68b39e61b7f72f7298f8bd48053818ae87fb4d2af",
+    "experiments/rdma_gather/gpu_graph.hpp": "f74987e91faadb0420d709ce6fddfda4c696f5a5c43e63cfddb147019923a02e",
+    "experiments/rdma_gather/target_umr.hpp": "e03e36b0e9c6c89b1c47d6cd27a23b8c7cd7ff56d3201695376820d30fc82803",
+    "experiments/rdma_gather/gpu_request.cpp": "9fe7656b8e58f9c6d362e4bd86dbc44ca279fb884f8c997b0c214b94cab7109c",
+    "experiments/rdma_gather/planner_profile.hpp": "1fb620bdb9320c95fad8c99b6ad0f8942288ef76fbbb79586a7fdee977417440",
+    "experiments/rdma_gather/planner.hpp": "10ebadaf95432b6dc9f1c011f08ff31e7e986f89046cb1abe42d655fb28a1d2c",
+    "experiments/rdma_gather/CMakeLists.txt": "144a3631d7f2066a0449a75bfd0ff2a369c13260d8698ce4672bbd53f8281fb3",
+    "experiments/rdma_gather/gpu_request.cu": "ca32da87aabda78a00304aab6e912e3f7d14961c94eb2b455bd05955384d5822"
+  },
+  "input_generator_matches_read_inputs": [
+    {
+      "file": "indices-r0-t1-stratified-e1.bin",
+      "sha256": "307514cc8446f5ed4888ab7c311f023558a14ea960cea6dfbc94bab6ba5208fe"
+    },
+    {
+      "file": "indices-r0-t1-stratified-e21.bin",
+      "sha256": "7b232ab1d663000c345cb020c6a62a5ab789caabaa26b75ce1b1b17776a774ca"
+    },
+    {
+      "file": "indices-r0-t1-uniform-e1.bin",
+      "sha256": "bfe0965d3126f0e0101e23944ce8ce0315a6ee364c7009fe048779609380d6f3"
+    },
+    {
+      "file": "indices-r0-t1-uniform-e21.bin",
+      "sha256": "d84e5ae04493595668bc8c64a01bea953c9a7ffe003c30e7c49268543a6f32b5"
+    },
+    {
+      "file": "indices-r7-t4096-stratified-e1.bin",
+      "sha256": "bcf94eceb45edaabd78a6344ded6dfb8c1ee8d3aaa3c006c3e305566f970c8c7"
+    },
+    {
+      "file": "indices-r7-t4096-stratified-e21.bin",
+      "sha256": "b217c71c4a9899a9252ec9ee1cd2f9f831b3c54f72a196384eeb310644ea222f"
+    },
+    {
+      "file": "indices-r7-t4096-uniform-e1.bin",
+      "sha256": "1e1505a27490fe7274d92ee1799e8a9b21a72eb69186c1a48d450ef186994b2c"
+    },
+    {
+      "file": "indices-r7-t4096-uniform-e21.bin",
+      "sha256": "6e4b4209a7112f43ee5edd871b57c26f5efadf41215ccb64cef689e263b617fc"
+    }
+  ]
+}
