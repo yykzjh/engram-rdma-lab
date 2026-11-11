@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.so
+*.ptx
+*.o
+build/
+cmake-build*/
+.env
+.local/
+inputs/
+platform/

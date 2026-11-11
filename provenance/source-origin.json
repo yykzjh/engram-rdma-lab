@@ -1,0 +1,14 @@
+{
+  "upstream": "https://github.com/deepseek-ai/DeepEP",
+  "workspace_commit": "f6aa38fe06cd4a0489e7730365d4e0114970a2f3",
+  "deep_jit_commit": "cba802df081985141eeee36803685775c183a047",
+  "preserved_user_files": {
+    "csrc/buffers/engram.hpp": "5974c1ab12826edbd7c36eaa8bf2d7b2d8b01d355039e1dd2234d30f8c88e89c",
+    "deep_ep/buffers/engram.py": "0a62f1595068a0ff2117c52189ef128fb4377658d70cdb8af164b993dfccf302",
+    "tests/engram/test_engram.py": "e381b81e5e1e5ca3c692903de83204af229a63a198a6ce52477a4bb28c5f8875"
+  },
+  "baseline_kernel_sha256": "442539a3fa43221164358bc6beb8f26e86619b6d224b928de13a226f195f08ae",
+  "note": "User learning comments retained. Baseline Engram kernel includes the tested CUSTOM_STRIDE representative-rank correction; no G override. Original experiment sources migrated, with loopback defaults for portability.",
+  "scope": "DeepEP Engram and required common/JIT dependencies; SGE WRITE; original UMR/READ/WRITE experiment sources",
+  "excluded": "Unrelated upstream EP/PP/Bucket implementations"
+}

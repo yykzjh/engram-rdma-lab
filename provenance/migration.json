@@ -1,0 +1,19 @@
+{
+  "source": "DeepEP/tests/engram/rdma_gather",
+  "destination": "experiments/rdma_gather",
+  "original_source_sha256": {
+    "gpu_request.cpp": "9fe7656b8e58f9c6d362e4bd86dbc44ca279fb884f8c997b0c214b94cab7109c",
+    "target_umr.hpp": "e03e36b0e9c6c89b1c47d6cd27a23b8c7cd7ff56d3201695376820d30fc82803",
+    "planner_profile.hpp": "1fb620bdb9320c95fad8c99b6ad0f8942288ef76fbbb79586a7fdee977417440",
+    "gpu_request.cu": "ca32da87aabda78a00304aab6e912e3f7d14961c94eb2b455bd05955384d5822",
+    "benchmark.cpp": "c1b3500b2af1198e790b51ab125613f6904016920dd9bc70e4f62ef8a26c3381",
+    "rdma_common.hpp": "288ffb91a89107ed9bc9e09992d9565348dddafa66fb70fc0ab8379912dd3434",
+    "compare_deepep.py": "66dc3907597cd08afcac49f68b39e61b7f72f7298f8bd48053818ae87fb4d2af",
+    "planner_legacy.hpp": "595aad04105ed9138688dc3e91a779c4c529780e57d0f22cf22d678c8ecc5346",
+    "planner.hpp": "10ebadaf95432b6dc9f1c011f08ff31e7e986f89046cb1abe42d655fb28a1d2c",
+    "gpu_graph.hpp": "f74987e91faadb0420d709ce6fddfda4c696f5a5c43e63cfddb147019923a02e",
+    "benchmark_impl.hpp": "1cc63c6cf17f2fb3dcb303d86184f9926b4aa8f7afc653f62b99c43b55e64890"
+  },
+  "operational_reports": "Retained in local test evidence; not published",
+  "current_deepep_worktree": "Only three pre-existing learning-comment diffs remain"
+}
