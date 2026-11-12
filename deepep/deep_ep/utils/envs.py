@@ -6,7 +6,7 @@ import re
 import subprocess
 import torch
 import torch.distributed as dist
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 # noinspection PyUnresolvedReferences
 import deep_ep._C as _C
@@ -86,7 +86,9 @@ def dist_print(s: str = '', once_in_node: bool = False) -> None:
     dist.barrier()
 
 
-def init_dist(local_rank: int, num_local_ranks: int, seed: int = 0) -> Tuple[int, int, dist.ProcessGroup]:
+def init_dist(
+    local_rank: int, num_local_ranks: int, seed: int = 0, cuda_device: Optional[int] = None
+) -> Tuple[int, int, dist.ProcessGroup]:
     """
     Initialize the distributed environment with NCCL backend.
 
@@ -94,6 +96,7 @@ def init_dist(local_rank: int, num_local_ranks: int, seed: int = 0) -> Tuple[int
         local_rank: the local rank index.
         num_local_ranks: the number of local ranks.
         seed: the global random seed.
+        cuda_device: CUDA ordinal, independent of logical local rank after device reordering.
 
     Returns:
         rank: the global rank index.
@@ -113,6 +116,8 @@ def init_dist(local_rank: int, num_local_ranks: int, seed: int = 0) -> Tuple[int
     # Set local rank
     global _local_rank
     _local_rank = local_rank
+    device = local_rank if cuda_device is None else cuda_device
+    torch.cuda.set_device(device)
 
     sig = inspect.signature(dist.init_process_group)
     params = {
@@ -123,11 +128,10 @@ def init_dist(local_rank: int, num_local_ranks: int, seed: int = 0) -> Tuple[int
     }
     if 'device_id' in sig.parameters:
         # noinspection PyTypeChecker
-        params['device_id'] = torch.device(f'cuda:{local_rank}')
+        params['device_id'] = torch.device(f'cuda:{device}')
     dist.init_process_group(**params)
     torch.set_default_dtype(torch.bfloat16)
     torch.set_default_device('cuda')
-    torch.cuda.set_device(local_rank)
 
     init_seed(seed)
     return dist.get_rank(), dist.get_world_size(), dist.new_group(list(range(num_local_ranks * num_nodes)))

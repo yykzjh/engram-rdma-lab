@@ -56,6 +56,18 @@ export NCCL_CROSS_NIC=0 NCCL_GIN_TYPE=3 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
 
 WRITE 使用检测到的 GIN stride，要求它等于每节点参与的 GPU 数；进程组 ranks 按节点连续排列。可通过 `ENGRAM_WRITE_HCA` 指定本进程 HCA，默认 `mlx5_bond_<CUDA device>`。GPU DONE 要求原生 GPUDirect OWNER ordering。
 
+## EGM 双 GPU 供数出口
+
+在同一 CPU NUMA 连接两块 GPU 的已测环境中，`cudaSetDevice(local_rank)` 选择执行 GPU，但不能单独保证 HOST_NUMA EGM 分配归属于该 GPU。分配属性指定 CPU NUMA，没有指定某个 GPU 的出口；正常枚举顺序下，同 NUMA 两个 owner 的表实际都经靠前的 GPU 供数。不能仅凭八个 owner 就认为八条 C2C 均已使用。
+
+两个测试入口在 `ENGRAM_EGM_ENABLE=1` 时自动处理启动顺序：父进程通过 CUDA 查询当前已分配设备的 UUID；各个全新 spawn worker 将自己原来的 GPU UUID 放在 `CUDA_VISIBLE_DEVICES` 首位，然后选择 CUDA 设备 0，最后才导入后端。其余已分配 GPU 保持可见，逻辑 rank、物理 GPU、CPU 绑定保持原值。WRITE 根据原物理 GPU 显式选择 HCA，保留用户已经设置的 `ENGRAM_WRITE_HCA`。每个 rank 核验实际 UUID，并在结果的 `metadata.placement` 中记录设备和 HCA，避免 ordinal 变化后所有 rank 错选同一 GPU 或网卡。关闭 EGM 时保持原设备枚举。
+
+这是在 driver 580.105.08、CUDA 13.2 上验证的启动层处理方式，不是 Buffer 在运行中修改 allocation 归属。必须在 CUDA 驱动初始化之前执行；仅检查 PyTorch 尚未初始化 CUDA 并不充分，DeepEP 的模块导入也会初始化驱动。应用自己的 launcher 可复用 `benchmarks/rank_startup.py` 的父进程设备发现和 worker 绑定流程，但不能在已初始化 CUDA 的 Buffer 构造函数中补做，也不能使用 fork 继承已初始化的 CUDA 状态。
+
+[NVIDIA EGM 文档](https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/extended-gpu-memory.html)规定 HOST_NUMA 的分配与访问权限，并建议使用 CUDA 可见性管理设备；它没有承诺按枚举顺序指定 owning GPU 的跨版本行为。升级软件栈后需重新核验两块 GPU 的物理流量。词表仍为单份 CPU VMM 内存，映射失败的逐 rank 对 RDMA 回退机制不变。
+
+两条 C2C 仍共享 CPU 内存带宽。已测每 CPU 480 GB LPDDR5 配置的固件报告数据宽度480 bit、速率6400 MT/s，对应384 GB/s；[NVIDIA Grace 规格](https://www.nvidia.com/en-us/data-center/grace-cpu-superchip/)也列明480 GB配置最高384 GB/s。同CPU双GPU读取EGM实测合计约344～361 GB/s，不同CPU各一GPU则约420 GB/s；本地CPU读取会降低前者，远端CPU读取不降低，符合共享内存供数限制。8 requester均匀查询4个CPU时，内存理论预算为`4 × 384 / 8 = 192 GB/s/requester`，按实测持续供数约为175～180 GB/s/requester，不能仅将两条C2C标称带宽相加后承诺225 GB/s。这里区分CPU内存供数限制和单条C2C限制，不把传输PMU计数当作LPDDR控制器忙碌率。
+
 ## WRITE 接口
 
 ```python
@@ -109,6 +121,8 @@ RANK=0 python benchmarks/test_write.py --tokens 4096 --rounds 20 \
 使用 `--async-check --locality-cycle --rounds 24` 可在同一个 Buffer/Graph 内由 GPU 循环切换纯机内、跨机、混合、空层和全 padding，检查空请求跳过后的序号与输出；可同时加跨 stream 和逆序 hook 选项。
 
 WRITE 常规测试使用GPU动态索引。做性能对照时，为WRITE加 `--matched-read --distribution uniform --cuda-graph`，READ也使用 `--distribution uniform --cuda-graph`：两入口使用完全相同的MT19937动态索引、权重、scales及CPU绑定，每轮输入生成和上传均在计时外；Graph中只保留fetch和hook。完整fetch计时包含发起、等待、重排与scales，初始化/上游输入/校验在计时外；逐轮结果按rank保存，比较时取同轮最慢rank并保留慢轮。有效embedding带宽按每rank返回字节数除以该时延计算，不代表网卡线速。
+
+复现现有测试结果文档时，两入口均加 `--affinity-cores 16 --warmups 3 --rounds 20`，固定 `ENGRAM_WRITE_LOCAL_SF=1`。沿用原表的 READ credit 设置：tokens 为1或不小于65536时，设置 `NCCL_GIN_GDAKI_MAX_QP_RD_ATOMIC=8`；其余规模设置为16。QP数与深度仍由各自框架推荐。改变CPU核数或READ credit会改变RDMA对照结果，不能把这些参数差异算成EGM出口分担的收益。
 
 采集WRITE时间线使用同一入口加 `--profile --rounds 3`，默认只对全局rank 0采集CPU/CUDA事件，输出 `write-sge-r0.trace.json`，可用Perfetto打开。普通模式标注发请求、独立计算和每层DONE等待/重排；加 `--cuda-graph` 可采集Graph replay。初始化、预热与最后一轮数据校验在采集区间外，区间内连续提交forward、最后统一同步。Torch trace展示CPU提交和GPU kernel；后台verbs服务与网卡活动未单独埋点。
 

@@ -14,8 +14,7 @@ import time
 import numpy as np
 import torch
 import torch.distributed as dist
-import deep_ep
-from deep_ep.utils.envs import init_dist
+from rank_startup import assigned_devices, bind_rank
 
 ENTRIES = [524288, 524309]
 HIDDEN, EPT = 256, 24
@@ -84,6 +83,7 @@ def inject_egm_failures(rank, pairs):
     """仅测试使用：破坏指定方向的映射元数据，不给生产实现增加故障开关。"""
     if not pairs:
         return
+    import deep_ep
     native = deep_ep._C.EngramBuffer
     original = native.probe_routes
 
@@ -105,9 +105,14 @@ def inject_egm_failures(rank, pairs):
 
 @torch.inference_mode()
 def worker(local_rank, args):
+    device, placement = bind_rank(local_rank, args.assigned_devices)
+    # DeepEP initializes the CUDA driver at import time. Import only after the
+    # fresh worker's device enumeration is fixed, before constructing any Buffer.
+    import deep_ep
+    from deep_ep.utils.envs import init_dist
     bases = [32, 48, 104, 120]
     os.sched_setaffinity(0, range(bases[local_rank], bases[local_rank] + args.affinity_cores))
-    rank, world, group = init_dist(local_rank, 4, seed=12345)
+    rank, world, group = init_dist(local_rank, 4, seed=12345, cuda_device=device)
     assert world == 8
     if not (0 <= args.requester_rank < world and 0 <= args.owner_rank < world):
         raise ValueError("requester/owner rank is outside the process group")
@@ -120,7 +125,6 @@ def worker(local_rank, args):
     if args.egm_fail_pair and os.environ.get("ENGRAM_EGM_ENABLE", "0") != "1":
         raise ValueError("--egm-fail-pair requires ENGRAM_EGM_ENABLE=1")
     inject_egm_failures(rank, args.egm_fail_pair)
-    torch.cuda.set_device(local_rank)
     root = Path(args.output_dir)
     root.mkdir(exist_ok=True, parents=True)
     raw = (
@@ -166,6 +170,7 @@ def worker(local_rank, args):
     include = Path(deep_ep.__file__).parent / "include/deep_ep/impls/engram"
     routing = buffer.get_route_info()
     metadata = {
+        "placement": placement,
         "egm_enabled": routing["egm_enabled"],
         "injected_egm_failures": args.egm_fail_pair,
         "routing": routing,
@@ -345,4 +350,5 @@ if __name__ == "__main__":
         p.error("WORLD_SIZE must be 2 (nodes), RANK must be 0 or 1")
     if not 1 <= args.tokens <= 262144 or not 1 <= args.rounds <= 30 or not 0 <= args.warmups <= 3:
         p.error("tokens: 1..262144; rounds: 1..30; warmups: 0..3")
+    args.assigned_devices = assigned_devices(4)
     torch.multiprocessing.spawn(worker, args=(args,), nprocs=4)

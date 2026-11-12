@@ -12,7 +12,7 @@ from pathlib import Path
 import torch
 import torch.distributed as dist
 import numpy as np
-import engram_sge_write
+from rank_startup import assigned_devices, bind_rank
 
 A, B = 0x9E3779B97F4A7C15 - (1 << 64), 0xD1B54A32D192ED03 - (1 << 64)
 
@@ -120,6 +120,7 @@ def inject_egm_failures(rank, pairs):
     """仅测试使用：破坏指定方向的映射元数据，不给生产实现增加故障开关。"""
     if not pairs:
         return
+    import engram_sge_write
     native = engram_sge_write._C.Runtime
     original = native.probe_routes
 
@@ -141,10 +142,11 @@ def inject_egm_failures(rank, pairs):
 
 @torch.inference_mode()
 def worker(local_rank, args):
+    _, placement = bind_rank(local_rank, args.assigned_devices, write=True)
+    import engram_sge_write
     if args.matched_read:
         bases = [32, 48, 104, 120]
         os.sched_setaffinity(0, range(bases[local_rank], bases[local_rank] + args.affinity_cores))
-    torch.cuda.set_device(local_rank)
     node_rank, nodes = int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"])
     dist.init_process_group(
         "nccl",
@@ -486,6 +488,7 @@ def worker(local_rank, args):
                 dist.barrier(group=control)
         metadata = dict(async_check=False)
     metadata.update(
+        placement=placement,
         egm_enabled=buffer.egm.enabled,
         injected_egm_failures=args.egm_fail_pair,
         routing=buffer.get_route_info(),
@@ -593,4 +596,5 @@ if __name__ == "__main__":
         or a.locality_cycle
     ):
         p.error("--matched-read requires the default FP8 shape and ordinary or Graph benchmark mode")
+    a.assigned_devices = assigned_devices(a.local_ranks)
     torch.multiprocessing.spawn(worker, args=(a,), nprocs=a.local_ranks)
