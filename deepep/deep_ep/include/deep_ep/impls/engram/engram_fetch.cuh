@@ -6,13 +6,11 @@
 #include <deep_ep/common/math.cuh>
 #include <deep_ep/common/ptx.cuh>
 #include <deep_ep/layout/engram/workspace.cuh>
-#include <deep_ep/impls/engram/local_cpu_config.cuh>
-
+#include <deep_ep/impls/engram/egm_config.cuh>
 
 namespace deep_ep::engram {
 
-template <int kNumRDMAPeers, int kNumGinContexts, int kNumIssueWarps>
-struct EngramIssueWarpLayout {
+template <int kNumRDMAPeers, int kNumGinContexts, int kNumIssueWarps> struct EngramIssueWarpLayout {
     int rdma_peer_idx;
     int gin_context_idx;
     int peer_context_idx;
@@ -33,40 +31,23 @@ struct EngramIssueWarpLayout {
     }
 
     __device__ __forceinline__ int get_num_active_peer_context_warps(const int num_token_tiles) const {
-        const auto num_token_warps = gin_context_idx < num_token_tiles
-            ? math::ceil_div(num_token_tiles - gin_context_idx, kNumGinContexts) : 0;
+        const auto num_token_warps =
+            gin_context_idx < num_token_tiles ? math::ceil_div(num_token_tiles - gin_context_idx, kNumGinContexts) : 0;
         return num_token_warps < num_peer_context_warps ? num_token_warps : num_peer_context_warps;
     }
 };
 
-template <int kNumSMs, int kNumQPs,
-          int kNumSFWarpsPerSM, int kNumIssueWarpsPerSM,
-          typename engram_layout_t,
-          int kNumSFPacks,
-          int kNumMaxTokens,
-          int kNumRDMAPeers,
-          int kNumRanksPerRDMAPeer,
-          int kFlushDepth,
-          int64_t kNumTimeoutCycles,
-          int kNumSFWarps = kNumSMs * kNumSFWarpsPerSM,
+template <int kNumSMs, int kNumQPs, int kNumSFWarpsPerSM, int kNumIssueWarpsPerSM, typename engram_layout_t,
+          int kNumSFPacks, int kNumMaxTokens, int kNumRDMAPeers, int kNumRanksPerRDMAPeer, int kFlushDepth,
+          int64_t kNumTimeoutCycles, int kNumSFWarps = kNumSMs * kNumSFWarpsPerSM,
           int kNumIssueWarps = kNumSMs * kNumIssueWarpsPerSM,
           int kNumThreads = (kNumSFWarpsPerSM + kNumIssueWarpsPerSM) * 32>
 __global__ void __launch_bounds__(kNumThreads, 1)
-engram_fetch_impl(
-    const ncclDevComm_t nccl_dev_comm,
-    const ncclWindow_t nccl_window,
-    const ncclWindow_t* storage_windows,
-    void* fetched,
-    void* workspace_ptr,
-    int* indices,
-    ncclGinRequest_t* last_gin_requests,
-    const sf_pack_t* sf_shards,
-    sf_pack_t* fetched_sf,
-    const int sf_token_stride,
-    const int sf_hidden_stride,
-    const int sf_layer_stride,
-    const int num_tokens
-) {
+    engram_fetch_impl(const ncclDevComm_t nccl_dev_comm, const ncclWindow_t nccl_window,
+                      const ncclWindow_t *storage_windows, void *const *direct_storage, const unsigned *direct_groups,
+                      void *fetched, void *workspace_ptr, int *indices, ncclGinRequest_t *last_gin_requests,
+                      const sf_pack_t *sf_shards, sf_pack_t *fetched_sf, const int sf_token_stride,
+                      const int sf_hidden_stride, const int sf_layer_stride, const int num_tokens) {
     constexpr int kWarpSize = 32;
     constexpr int kNumLayers = engram_layout_t::kNumLayers;
     constexpr int kNumEntriesPerToken = engram_layout_t::kNumEntriesPerToken;
@@ -82,12 +63,11 @@ engram_fetch_impl(
         constexpr int kNumPeerContexts = kNumRDMAPeers * kNumQPs;
         const auto issue_warp_idx = sm_idx * kNumIssueWarpsPerSM + warp_idx;
         const auto num_token_tiles = math::ceil_div(num_tokens, kWarpSize);
-        const auto issue_layout = EngramIssueWarpLayout<
-            kNumRDMAPeers, kNumQPs, kNumIssueWarps>(issue_warp_idx);
-        const bool is_local_peer = EP_ENGRAM_LOCAL_CPU_READ &&
-            issue_layout.rdma_peer_idx == nccl_dev_comm.rank / kNumRanksPerRDMAPeer;
+        const auto issue_layout = EngramIssueWarpLayout<kNumRDMAPeers, kNumQPs, kNumIssueWarps>(issue_warp_idx);
+        // 直读按owner决定；GIN peer只是节点内rail分组，并不等于fabric域。
+        const bool whole_direct = EP_ENGRAM_EGM_READ && direct_groups[issue_layout.rdma_peer_idx];
 
-        if (is_local_peer) {
+        if (EP_ENGRAM_EGM_READ) {
             // Token-tile scheduling is appropriate for asynchronous GIN issue,
             // but leaves tiny CPU gathers on one warp. Spread current rows over
             // all local issue warps instead; no routing plan is cached.
@@ -97,57 +77,59 @@ engram_fetch_impl(
             EP_STATIC_ASSERT(engram_layout_t::kNumHiddenBytes % sizeof(int4) == 0,
                              "Local copy requires vector-aligned rows");
             const auto num_entries = num_tokens * kNumEntriesPerToken;
-            #pragma unroll
+#pragma unroll
             for (int layer_idx = 0; layer_idx < kNumLayers; ++layer_idx) {
                 const auto n = engram_layout_t::get_num_entries(layer_idx);
                 const auto begin = issue_layout.rdma_peer_idx * kNumRanksPerRDMAPeer * n;
                 const auto end = begin + kNumRanksPerRDMAPeer * n;
-                for (int entry = issue_layout.peer_warp_idx * kRowsPerWarp + lane_idx / kCopyLanes;
-                     entry < num_entries; entry += issue_layout.num_peer_warps * kRowsPerWarp) {
+                for (int entry = issue_layout.peer_warp_idx * kRowsPerWarp + lane_idx / kCopyLanes; entry < num_entries;
+                     entry += issue_layout.num_peer_warps * kRowsPerWarp) {
                     const auto index = __ldg(indices + layer_idx * num_entries + entry);
-                    if (index >= begin && index < end) {
+                    if (index >= begin && index < end && direct_storage[index / n] != nullptr) {
                         const auto in_peer = index - begin;
                         const auto offset = engram_layout_t::get_storage_byte_offset(layer_idx, in_peer % n);
-                        const auto* src = static_cast<const int4*>(
-                            ncclGetLocalPointer(storage_windows[in_peer / n], offset));
-                        auto* dst = reinterpret_cast<int4*>(math::advance_ptr(fetched,
-                            engram_layout_t::get_recv_byte_offset(layer_idx, entry, kNumMaxTokens)));
-                        #pragma unroll
+                        const auto *src =
+                            static_cast<const int4 *>(math::advance_ptr(direct_storage[index / n], offset));
+                        auto *dst = reinterpret_cast<int4 *>(math::advance_ptr(
+                            fetched, engram_layout_t::get_recv_byte_offset(layer_idx, entry, kNumMaxTokens)));
+#pragma unroll
                         for (int v = lane_idx % kCopyLanes; v < kVectors; v += kCopyLanes)
                             dst[v] = __ldg(src + v);
                     }
                 }
             }
-            return;
         }
+        if (whole_direct)
+            return;
         if (issue_layout.peer_warp_idx >= num_token_tiles)
             return;
 
-        const auto num_active_peer_context_warps =
-            issue_layout.get_num_active_peer_context_warps(num_token_tiles);
+        const auto num_active_peer_context_warps = issue_layout.get_num_active_peer_context_warps(num_token_tiles);
         // Custom-stride GIN contexts connect ranks with the same offset within each group.
         // Every rank in a group registers the same mapped storage windows.
-        const auto rdma_peer_rank = issue_layout.rdma_peer_idx * kNumRanksPerRDMAPeer
-            + nccl_dev_comm.rank % kNumRanksPerRDMAPeer;
-        const auto doorbell_threshold = kFlushDepth >= num_active_peer_context_warps
-            ? kFlushDepth / num_active_peer_context_warps : 1;
-        const auto gin = comm::NCCLGin(
-            nccl_dev_comm, nccl_window, issue_layout.gin_context_idx, NCCL_GIN_RESOURCE_SHARING_GPU);
-        auto& workspace = *static_cast<layout::EngramWorkspace*>(workspace_ptr);
-        auto* warp_pending_requests = pending_requests[warp_idx];
+        const auto rdma_peer_rank =
+            issue_layout.rdma_peer_idx * kNumRanksPerRDMAPeer + nccl_dev_comm.rank % kNumRanksPerRDMAPeer;
+        const auto doorbell_threshold =
+            kFlushDepth >= num_active_peer_context_warps ? kFlushDepth / num_active_peer_context_warps : 1;
+        const auto gin =
+            comm::NCCLGin(nccl_dev_comm, nccl_window, issue_layout.gin_context_idx, NCCL_GIN_RESOURCE_SHARING_GPU);
+        auto &workspace = *static_cast<layout::EngramWorkspace *>(workspace_ptr);
+        auto *warp_pending_requests = pending_requests[warp_idx];
 
         const auto num_entries = num_tokens * kNumEntriesPerToken;
-        #pragma unroll
-        for (int layer_idx = 0; layer_idx < kNumLayers; ++ layer_idx) {
+#pragma unroll
+        for (int layer_idx = 0; layer_idx < kNumLayers; ++layer_idx) {
             int num_issued_requests = 0;
             int num_pending_requests = 0;
             int pending_head = 0;
             const auto num_entries_per_rank = engram_layout_t::get_num_entries(layer_idx);
             const auto peer_global_idx_begin = issue_layout.rdma_peer_idx * kNumRanksPerRDMAPeer * num_entries_per_rank;
-            const auto peer_global_idx_end = (issue_layout.rdma_peer_idx + 1) * kNumRanksPerRDMAPeer * num_entries_per_rank;
+            const auto peer_global_idx_end =
+                (issue_layout.rdma_peer_idx + 1) * kNumRanksPerRDMAPeer * num_entries_per_rank;
 
             const auto issue_batch = [&](const int batch_size, const bool is_last_batch = false) {
-                const auto rings_doorbell = is_last_batch or num_issued_requests % doorbell_threshold + batch_size >= doorbell_threshold;
+                const auto rings_doorbell =
+                    is_last_batch or num_issued_requests % doorbell_threshold + batch_size >= doorbell_threshold;
                 num_issued_requests += batch_size;
                 const auto options = rings_doorbell ? ncclGinOptFlagsDefault : ncclGinOptFlagsAggregateRequests;
 
@@ -159,39 +141,34 @@ engram_fetch_impl(
                     const auto intra_peer_rank_idx = peer_local_idx / num_entries_per_rank;
                     const auto local_entry_idx = peer_local_idx % num_entries_per_rank;
                     const auto src_byte_offset = engram_layout_t::get_storage_byte_offset(layer_idx, local_entry_idx);
-                    const auto dst_byte_offset = engram_layout_t::get_recv_byte_offset(
-                        layer_idx, entry_idx, kNumMaxTokens);
+                    const auto dst_byte_offset =
+                        engram_layout_t::get_recv_byte_offset(layer_idx, entry_idx, kNumMaxTokens);
                     gin.get<ncclTeamTagWorld, ncclCoopThread, ncclGin_SegmentMixed>(
-                        storage_windows[intra_peer_rank_idx], src_byte_offset,
-                        nccl_window, gin.get_sym_offset(math::advance_ptr(fetched, dst_byte_offset)),
-                        engram_layout_t::kNumHiddenBytes,
-                        rdma_peer_rank,
-                        options);
+                        storage_windows[intra_peer_rank_idx], src_byte_offset, nccl_window,
+                        gin.get_sym_offset(math::advance_ptr(fetched, dst_byte_offset)),
+                        engram_layout_t::kNumHiddenBytes, rdma_peer_rank, options);
                 }
             };
 
-            for (int token_tile_idx = issue_layout.peer_warp_idx;
-                 token_tile_idx < num_token_tiles;
+            for (int token_tile_idx = issue_layout.peer_warp_idx; token_tile_idx < num_token_tiles;
                  token_tile_idx += issue_layout.num_peer_warps) {
                 const auto first_entry_idx = token_tile_idx * kWarpSize * kNumEntriesPerToken;
 
                 for (int round_idx = 0; round_idx < kNumEntriesPerToken; ++round_idx) {
                     const auto entry_idx = first_entry_idx + round_idx * kWarpSize + lane_idx;
-                    const auto global_idx = entry_idx < num_entries
-                        ? __ldg(indices + layer_idx * num_entries + entry_idx)
-                        : -1;
+                    const auto global_idx =
+                        entry_idx < num_entries ? __ldg(indices + layer_idx * num_entries + entry_idx) : -1;
                     const auto belongs_to_peer =
-                        global_idx >= peer_global_idx_begin && global_idx < peer_global_idx_end;
+                        global_idx >= peer_global_idx_begin && global_idx < peer_global_idx_end &&
+                        (!EP_ENGRAM_EGM_READ || direct_storage[global_idx / num_entries_per_rank] == nullptr);
                     const auto peer_mask = __ballot_sync(0xffffffffu, belongs_to_peer);
 
                     if (belongs_to_peer) {
                         const auto lower_lanes_mask = (1u << lane_idx) - 1;
                         const auto pending_idx =
-                            (pending_head + num_pending_requests +
-                             __popc(peer_mask & lower_lanes_mask)) &
+                            (pending_head + num_pending_requests + __popc(peer_mask & lower_lanes_mask)) &
                             (2 * kWarpSize - 1);
-                        warp_pending_requests[pending_idx] =
-                            (static_cast<int64_t>(global_idx) << 32) | entry_idx;
+                        warp_pending_requests[pending_idx] = (static_cast<int64_t>(global_idx) << 32) | entry_idx;
                     }
                     __syncwarp();
                     num_pending_requests += __popc(peer_mask);
@@ -211,8 +188,7 @@ engram_fetch_impl(
             }
 
             if (ptx::elect_one_sync()) {
-                auto* issue_counter = workspace.get_issue_counter_ptr(
-                    layer_idx, issue_layout.peer_context_idx);
+                auto *issue_counter = workspace.get_issue_counter_ptr(layer_idx, issue_layout.peer_context_idx);
                 const auto request_ptr =
                     last_gin_requests + layer_idx * kNumPeerContexts + issue_layout.peer_context_idx;
                 if (num_active_peer_context_warps == 1) {
@@ -225,11 +201,10 @@ engram_fetch_impl(
                     const auto arrival_idx = num_arrivals.fetch_add(1, cuda::memory_order_release);
                     if (arrival_idx + 1 == num_active_peer_context_warps) {
                         ptx::fence_acquire_gpu();
-                        gin.flush_async<ncclTeamTagWorld, ncclCoopThread>(
-                            rdma_peer_rank, request_ptr);
+                        gin.flush_async<ncclTeamTagWorld, ncclCoopThread>(rdma_peer_rank, request_ptr);
                         ptx::st_relaxed_gpu(issue_counter, 0u);
                     } else if (layer_idx + 1 < kNumLayers) {
-                        comm::timeout_while<kNumTimeoutCycles>([&](const bool& is_last_check) {
+                        comm::timeout_while<kNumTimeoutCycles>([&](const bool &is_last_check) {
                             if (ptx::ld_volatile<uint32_t>(issue_counter) == 0)
                                 return true;
 
@@ -261,26 +236,26 @@ engram_fetch_impl(
 
             const auto sf_row_idx = engram_layout_t::get_sf_row_idx(layer_idx, global_idx);
             const auto sf_shard_idx = engram_layout_t::get_sf_shard_idx(layer_idx, global_idx);
-            const auto* sf_shard = gin.get_sym_ptr<ncclTeamTagLsa>(const_cast<sf_pack_t*>(sf_shards), sf_shard_idx);
-            const auto* src = reinterpret_cast<const uint64_t*>(sf_shard + sf_row_idx * kNumSFPacks);
+            const auto *sf_shard = gin.get_sym_ptr<ncclTeamTagLsa>(const_cast<sf_pack_t *>(sf_shards), sf_shard_idx);
+            const auto *src = reinterpret_cast<const uint64_t *>(sf_shard + sf_row_idx * kNumSFPacks);
 
             uint64_t values[kNumVecs];
-            #pragma unroll
-            for (int i = 0; i < kNumVecs; ++ i)
+#pragma unroll
+            for (int i = 0; i < kNumVecs; ++i)
                 values[i] = __ldg(src + i);
 
-            auto* dst = fetched_sf + layer_idx * sf_layer_stride +
-                (entry_idx / kNumEntriesPerToken) * sf_token_stride +
-                (entry_idx % kNumEntriesPerToken) * kNumSFPacks * sf_hidden_stride;
-            #pragma unroll
-            for (int i = 0; i < kNumVecs; ++ i) {
-                #pragma unroll
-                for (int j = 0; j < kNumPacksPerVec; ++ j)
-                    dst[(i * kNumPacksPerVec + j) * sf_hidden_stride] = reinterpret_cast<const sf_pack_t*>(&values[i])[j];
+            auto *dst = fetched_sf + layer_idx * sf_layer_stride + (entry_idx / kNumEntriesPerToken) * sf_token_stride +
+                        (entry_idx % kNumEntriesPerToken) * kNumSFPacks * sf_hidden_stride;
+#pragma unroll
+            for (int i = 0; i < kNumVecs; ++i) {
+#pragma unroll
+                for (int j = 0; j < kNumPacksPerVec; ++j)
+                    dst[(i * kNumPacksPerVec + j) * sf_hidden_stride] =
+                        reinterpret_cast<const sf_pack_t *>(&values[i])[j];
             }
         };
 
-        #pragma unroll
+#pragma unroll
         for (int layer_idx = 0; layer_idx < kNumLayers; ++layer_idx) {
             const auto num_token_tiles = math::ceil_div(num_tokens, kWarpSize);
             for (int i = sf_warp_idx; i < kNumEntriesPerToken * num_token_tiles; i += kNumSFWarps) {
@@ -294,4 +269,4 @@ engram_fetch_impl(
     }
 }
 
-}  // namespace deep_ep::engram
+} // namespace deep_ep::engram
