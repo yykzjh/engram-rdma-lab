@@ -32,7 +32,7 @@ class Runtime : public std::enable_shared_from_this<Runtime> {
     std::vector<CUdeviceptr> table_ptrs;
     bool routes_probed = false, routes_ready = false;
     CUdeviceptr routes_gpu = 0;
-    bool has_egm_routes = false, connected = false, closed = false;
+    bool has_egm_routes = false, has_rdma_routes = false, connected = false, closed = false;
     uint64_t timeout_cycles, slot_bytes, table_rows = 0, allocation_bytes = 0;
     std::vector<unsigned> entries, table_bases, sf_bases;
     CUcontext context = nullptr;
@@ -278,9 +278,11 @@ class Runtime : public std::enable_shared_from_this<Runtime> {
         ck(routes_probed && !routes_ready && !connected && !closed && peers.size() == world && selected.size() == world,
            "WRITE route commit state");
         has_egm_routes = false;
+        has_rdma_routes = false;
         for (unsigned peer = 0; peer < world; ++peer) {
             ck(selected[peer] <= routes[peer], "WRITE route exceeds probed capability");
             if (!selected[peer]) {
+                has_rdma_routes = true;
                 table_ptrs[peer] = 0;
                 table_aliases[peer].reset();
                 fabric_aliases[peer].reset();
@@ -552,7 +554,10 @@ class Runtime : public std::enable_shared_from_this<Runtime> {
         // wait只检查[layer,owner,QP]对应epoch；其他层是否已调用hook不影响这一层。
         // scatter消费packed与positions，finished供下一轮eager fetch保护工作区复用。
         unsigned words = row_bytes / 8, grid = std::max(1u, std::min(4096u, (tokens * ept * words + 255) / 256));
-        grid = std::min(grid, finish_blocks);
+        // RDMA results need enough resident CTAs to hide packed->output scatter latency.
+        // The SM-count cap is only useful for all-EGM routes, whose RDMA totals are zero.
+        if (!has_rdma_routes)
+            grid = std::min(grid, finish_blocks);
         void *finish[] = {&done,  &epoch,    &totals, &packed, &output,     &positions,     &layer,
                           &world, &capacity, &words,  &qps,    &active_qps, &timeout_cycles};
         launch("finish_layer", grid, 1, 256, finish, s);
